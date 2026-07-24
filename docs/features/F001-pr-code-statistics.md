@@ -8,7 +8,7 @@ created: 2026-07-24
 
 # F001: GitHub / GitCode PR 代码变更统计
 
-> **Status**: review | **Owner**: opus | **Priority**: P1
+> **Status**: done | **Owner**: opus | **Priority**: P1 | **Reviewed by**: sol (APPROVE @ `6523cc0`)
 
 ## Why
 
