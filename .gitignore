@@ -1,0 +1,13 @@
+# Clowder AI local config
+.cat-cafe/
+.claude/
+.codex/
+.kimi/
+
+# Test artifacts
+.playwright-mcp/
+screenshots/
+
+# OS files
+.DS_Store
+Thumbs.db
