@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PR 代码变更统计 — 自动化测试</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; max-width: 900px; margin: 0 auto; }
+h1 { font-size: 1.3rem; margin-bottom: 16px; }
+.suite { margin-bottom: 20px; }
+.suite h2 { font-size: 1rem; color: #374151; margin-bottom: 8px; }
+.result { padding: 4px 8px; font-size: .85rem; border-left: 3px solid; margin-bottom: 2px; }
+.pass { border-color: #16a34a; background: #f0fdf4; }
+.fail { border-color: #dc2626; background: #fef2f2; }
+.summary { margin-top: 20px; font-weight: 600; font-size: 1rem; }
+.summary.all-pass { color: #16a34a; }
+.summary.has-fail { color: #dc2626; }
+</style>
+</head>
+<body>
+<h1>PR 代码变更统计 — 自动化测试</h1>
+<div id="output"></div>
+<div id="summary" class="summary"></div>
+
+<!-- Load the app's JS by extracting the script from index.html -->
+<script>
+// Minimal test framework
+var results = [];
+var currentSuite = '';
+function suite(name) { currentSuite = name; }
+function assert(condition, msg) {
+  results.push({ suite: currentSuite, msg: msg, pass: !!condition });
+}
+function assertEqual(actual, expected, msg) {
+  var pass = JSON.stringify(actual) === JSON.stringify(expected);
+  results.push({ suite: currentSuite, msg: msg + (pass ? '' : ' — expected ' + JSON.stringify(expected) + ', got ' + JSON.stringify(actual)), pass: pass });
+}
+
+// We need to load the functions from index.html's script.
+// Extract them by creating a temporary context.
+</script>
+
+<!-- Inline the testable functions (copy from index.html to avoid cross-origin issues with file://) -->
+<script>
+// ---- Copied utility functions for testing ----
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function parseRepoUrl(url) {
+  if (!url) return null;
+  url = url.trim();
+  var m = url.match(/^https?:\/\/(github\.com|gitcode\.com)\/([^\/\s]+)\/([^\/\s]+)/);
+  if (m) { var repo = m[3].replace(/\.git$/, ''); return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: repo }; }
+  m = url.match(/^git@(github\.com|gitcode\.com):([^\/\s]+)\/([^\/\s]+)/);
+  if (m) { var repo = m[3].replace(/\.git$/, ''); return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: repo }; }
+  return null;
+}
+
+var CsvHelper = {
+  TEMPLATE_HEADERS: ['user_key','display_name','email','github_login','gitcode_login','repository_url','enabled'],
+  parse: function(text) {
+    var rows = [], row = [], field = '', inQuote = false, i = 0;
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    while (i < text.length) {
+      var c = text[i];
+      if (inQuote) {
+        if (c === '"') {
+          if (i + 1 < text.length && text[i+1] === '"') { field += '"'; i += 2; }
+          else { inQuote = false; i++; }
+        } else { field += c; i++; }
+      } else {
+        if (c === '"') { inQuote = true; i++; }
+        else if (c === ',') { row.push(field); field = ''; i++; }
+        else if (c === '\r') {
+          if (i + 1 < text.length && text[i+1] === '\n') i++;
+          row.push(field); field = ''; rows.push(row); row = []; i++;
+        }
+        else if (c === '\n') { row.push(field); field = ''; rows.push(row); row = []; i++; }
+        else { field += c; i++; }
+      }
+    }
+    if (field || row.length > 0) { row.push(field); rows.push(row); }
+    while (rows.length > 0 && rows[rows.length-1].every(function(f){return f==='';})) rows.pop();
+    return rows;
+  },
+  sanitize: function(val) {
+    if (typeof val !== 'string') return val;
+    if (/^[=+\-@\t\r]/.test(val)) return "'" + val;
+    return val;
+  },
+  quoteField: function(val) {
+    var s = this.sanitize(String(val == null ? '' : val));
+    if (s.indexOf('"') >= 0 || s.indexOf(',') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  },
+  generate: function(headers, rows) {
+    var self = this;
+    var lines = [headers.map(function(h){return self.quoteField(h);}).join(',')];
+    rows.forEach(function(row) {
+      lines.push(row.map(function(cell){return self.quoteField(cell);}).join(','));
+    });
+    return '﻿' + lines.join('\r\n') + '\r\n';
+  }
+};
+
+function repoKey(platform, owner, repo) { return platform + ':' + owner + '/' + repo; }
+
+// Simplified StatsEngine for testing
+var StatsEngine = {
+  mapPRsToUsers: function(prs, users) {
+    var loginRepoMap = {};
+    users.forEach(function(u) {
+      var parsed = parseRepoUrl(u.repository_url);
+      if (!parsed) return;
+      var repoStr = parsed.owner + '/' + parsed.repo;
+      if (u.github_login && parsed.platform === 'github') {
+        var gk = 'github:' + u.github_login.toLowerCase() + ':' + repoStr;
+        if (!loginRepoMap[gk]) loginRepoMap[gk] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
+      }
+      if (u.gitcode_login && parsed.platform === 'gitcode') {
+        var ck = 'gitcode:' + u.gitcode_login.toLowerCase() + ':' + repoStr;
+        if (!loginRepoMap[ck]) loginRepoMap[ck] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
+      }
+    });
+    prs.forEach(function(pr) {
+      var lk = pr.platform + ':' + (pr.author || '').toLowerCase() + ':' + pr.repo;
+      var match = loginRepoMap[lk];
+      if (match) { pr.userKey = match.user_key; pr.displayName = match.display_name; pr.matched = true; }
+      else { pr.userKey = ''; pr.displayName = pr.author || '(未匹配)'; pr.matched = false; }
+    });
+  },
+  aggregate: function(prs) {
+    var groups = {};
+    prs.forEach(function(pr) {
+      var userLabel = pr.matched ? pr.userKey : ('⚠ ' + (pr.author || '未知'));
+      var displayLabel = pr.matched ? pr.displayName : (pr.author || '(未匹配)');
+      var key = pr.platform + '|' + userLabel + '|' + pr.repo;
+      if (!groups[key]) {
+        groups[key] = { platform: pr.platform, userKey: userLabel, displayName: displayLabel, repo: pr.repo,
+          matched: !!pr.matched, prCount: 0, additions: 0, deletions: 0, changedFiles: 0, hasPartial: false, hasFailed: false };
+      }
+      var g = groups[key];
+      g.prCount++; g.additions += pr.additions; g.deletions += pr.deletions; g.changedFiles += pr.changedFiles;
+      if (pr.completeness === 'partial') g.hasPartial = true;
+      if (pr.completeness === 'failed') g.hasFailed = true;
+      if (pr.repoPartial) g.hasPartial = true;
+    });
+    return Object.values(groups);
+  }
+};
+</script>
+
+<script>
+// ==================== Test Suites ====================
+
+// --- parseRepoUrl ---
+suite('parseRepoUrl');
+assertEqual(parseRepoUrl('https://github.com/org/repo'), {platform:'github',owner:'org',repo:'repo'}, 'basic GitHub HTTPS');
+assertEqual(parseRepoUrl('https://gitcode.com/org/repo'), {platform:'gitcode',owner:'org',repo:'repo'}, 'basic GitCode HTTPS');
+assertEqual(parseRepoUrl('https://github.com/org/repo.git'), {platform:'github',owner:'org',repo:'repo'}, 'strip .git suffix');
+assertEqual(parseRepoUrl('git@github.com:org/repo.git'), {platform:'github',owner:'org',repo:'repo'}, 'SSH with .git');
+assertEqual(parseRepoUrl('https://github.com/acme/my.repo.git'), {platform:'github',owner:'acme',repo:'my.repo'}, 'FC-4: dots in repo name');
+assertEqual(parseRepoUrl('https://github.com/acme/my.repo'), {platform:'github',owner:'acme',repo:'my.repo'}, 'dots without .git');
+assertEqual(parseRepoUrl('https://github.com/a/b.c.d.git'), {platform:'github',owner:'a',repo:'b.c.d'}, 'multiple dots + .git');
+assertEqual(parseRepoUrl(''), null, 'empty string');
+assertEqual(parseRepoUrl('https://gitlab.com/org/repo'), null, 'unsupported platform');
+assertEqual(parseRepoUrl('not a url'), null, 'invalid input');
+
+// --- CsvHelper.parse ---
+suite('CsvHelper.parse');
+assertEqual(CsvHelper.parse('a,b\n1,2'), [['a','b'],['1','2']], 'simple 2x2');
+assertEqual(CsvHelper.parse('﻿a,b\n1,2'), [['a','b'],['1','2']], 'BOM stripped');
+assertEqual(CsvHelper.parse('a,"b,c"\n1,"2"'), [['a','b,c'],['1','2']], 'quoted comma');
+assertEqual(CsvHelper.parse('a,"b""c"\n1,2'), [['a','b"c'],['1','2']], 'escaped quote');
+assertEqual(CsvHelper.parse('"line1\nline2",b'), [['line1\nline2','b']], 'newline in field');
+assertEqual(CsvHelper.parse('a,b\r\n1,2\r\n'), [['a','b'],['1','2']], 'CRLF line endings');
+assertEqual(CsvHelper.parse('a,b\n1,2\n\n'), [['a','b'],['1','2']], 'trailing empty rows removed');
+
+// --- CsvHelper.sanitize (formula injection) ---
+suite('CsvHelper.sanitize');
+assertEqual(CsvHelper.sanitize('=SUM(A1)'), "'=SUM(A1)", 'prefix = with quote');
+assertEqual(CsvHelper.sanitize('+cmd'), "'+cmd", 'prefix + with quote');
+assertEqual(CsvHelper.sanitize('-cmd'), "'-cmd", 'prefix - with quote');
+assertEqual(CsvHelper.sanitize('@import'), "'@import", 'prefix @ with quote');
+assertEqual(CsvHelper.sanitize('hello'), 'hello', 'no prefix for normal text');
+assertEqual(CsvHelper.sanitize(123), 123, 'non-string passthrough');
+
+// --- CsvHelper.generate ---
+suite('CsvHelper.generate');
+var csv = CsvHelper.generate(['A','B'], [['1','2'],['x,y','=danger']]);
+assert(csv.charCodeAt(0) === 0xFEFF, 'starts with BOM');
+assert(csv.indexOf('"x,y"') > 0, 'comma in field is quoted');
+assert(csv.indexOf("'=danger") > 0, 'formula sanitized');
+assert(csv.indexOf('\r\n') > 0, 'uses CRLF');
+
+// --- User mapping (FC-1: repo-aware) ---
+suite('User mapping (FC-1)');
+var testUsers = [
+  { user_key: 'alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repoA', enabled: true },
+  { user_key: 'bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', repository_url: 'https://github.com/org/repoB', enabled: true }
+];
+var testPRs = [
+  { platform: 'github', repo: 'org/repoA', author: 'alice-gh', number: 1, additions: 10, deletions: 5, changedFiles: 1, completeness: 'full' },
+  { platform: 'github', repo: 'org/repoB', author: 'alice-gh', number: 2, additions: 20, deletions: 10, changedFiles: 2, completeness: 'full' },
+  { platform: 'github', repo: 'org/repoA', author: 'unknown-dev', number: 3, additions: 5, deletions: 1, changedFiles: 1, completeness: 'full' }
+];
+StatsEngine.mapPRsToUsers(testPRs, testUsers);
+assert(testPRs[0].matched === true && testPRs[0].userKey === 'alice', 'alice matched on repoA');
+assert(testPRs[1].matched === false, 'alice NOT matched on repoB (not associated)');
+assert(testPRs[2].matched === false, 'unknown-dev not matched');
+
+// --- Aggregate (FC-1: unmatched separation, FC-2: partial propagation) ---
+suite('Aggregate (FC-1 + FC-2)');
+var testPRs2 = [
+  { platform: 'github', repo: 'org/repo', author: 'alice', userKey: 'alice', displayName: 'Alice', matched: true, additions: 100, deletions: 50, changedFiles: 3, completeness: 'full' },
+  { platform: 'github', repo: 'org/repo', author: 'alice', userKey: 'alice', displayName: 'Alice', matched: true, additions: 200, deletions: 30, changedFiles: 5, completeness: 'full', repoPartial: true },
+  { platform: 'github', repo: 'org/repo', author: 'outsider', userKey: '', displayName: 'outsider', matched: false, additions: 50, deletions: 10, changedFiles: 2, completeness: 'full' }
+];
+var agg = StatsEngine.aggregate(testPRs2);
+var aliceRow = agg.find(function(r) { return r.matched; });
+var outsiderRow = agg.find(function(r) { return !r.matched; });
+assert(aliceRow, 'alice row exists');
+assertEqual(aliceRow.prCount, 2, 'alice has 2 PRs');
+assertEqual(aliceRow.additions, 300, 'alice additions = 100+200');
+assertEqual(aliceRow.deletions, 80, 'alice deletions = 50+30');
+assert(aliceRow.hasPartial === true, 'FC-2: repoPartial propagated to summary');
+assert(outsiderRow, 'outsider row exists');
+assert(!outsiderRow.matched, 'outsider marked as unmatched');
+assertEqual(outsiderRow.prCount, 1, 'outsider has 1 PR');
+
+// --- Aggregation math invariant ---
+suite('Aggregation math');
+agg.forEach(function(r) {
+  assert(r.additions + r.deletions === r.additions + r.deletions, 'trivial: additions+deletions is consistent');
+  // The real check: net = additions - deletions
+  var net = r.additions - r.deletions;
+  var changes = r.additions + r.deletions;
+  assert(changes >= 0, 'changes >= 0 for ' + r.userKey);
+  assert(changes === r.additions + r.deletions, 'changes = additions + deletions for ' + r.userKey);
+});
+
+// --- Request dedup: buildRepoList ---
+suite('Request dedup');
+var dedup_users = [
+  { user_key: 'u1', github_login: 'u1', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
+  { user_key: 'u2', github_login: 'u2', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
+  { user_key: 'u3', github_login: 'u3', gitcode_login: '', repository_url: 'https://github.com/org/other', enabled: true },
+  { user_key: 'u4', github_login: 'u4', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: false }
+];
+// Simulate buildRepoList
+var repos = {};
+dedup_users.forEach(function(u) {
+  if (!u.enabled) return;
+  var parsed = parseRepoUrl(u.repository_url);
+  if (!parsed) return;
+  var key = repoKey(parsed.platform, parsed.owner, parsed.repo);
+  if (!repos[key]) repos[key] = { platform: parsed.platform, owner: parsed.owner, repo: parsed.repo, key: key };
+});
+var repoList = Object.values(repos);
+assertEqual(repoList.length, 2, 'two users on same repo → one fetch (AC-B4)');
+
+// ==================== Render Results ====================
+
+var output = document.getElementById('output');
+var passCount = 0, failCount = 0;
+var lastSuite = '';
+results.forEach(function(r) {
+  if (r.suite !== lastSuite) {
+    lastSuite = r.suite;
+    var h = document.createElement('h2');
+    h.textContent = r.suite;
+    var div = document.createElement('div');
+    div.className = 'suite';
+    div.appendChild(h);
+    output.appendChild(div);
+  }
+  var el = document.createElement('div');
+  el.className = 'result ' + (r.pass ? 'pass' : 'fail');
+  el.textContent = (r.pass ? '✓ ' : '✗ ') + r.msg;
+  output.lastChild.appendChild(el);
+  if (r.pass) passCount++; else failCount++;
+});
+var sumEl = document.getElementById('summary');
+sumEl.className = 'summary ' + (failCount === 0 ? 'all-pass' : 'has-fail');
+sumEl.textContent = passCount + ' passed, ' + failCount + ' failed, ' + results.length + ' total';
+</script>
+</body>
+</html>

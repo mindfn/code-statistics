@@ -428,12 +428,12 @@ function maskToken(token) {
 function parseRepoUrl(url) {
   if (!url) return null;
   url = url.trim();
-  // HTTPS
-  var m = url.match(/^https?:\/\/(github\.com|gitcode\.com)\/([^\/\s]+)\/([^\/\s\.]+)/);
-  if (m) return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: m[3] };
+  // HTTPS — allow dots in repo names, strip trailing .git
+  var m = url.match(/^https?:\/\/(github\.com|gitcode\.com)\/([^\/\s]+)\/([^\/\s]+)/);
+  if (m) { var repo = m[3].replace(/\.git$/, ''); return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: repo }; }
   // SSH
-  m = url.match(/^git@(github\.com|gitcode\.com):([^\/\s]+)\/([^\/\s\.]+)/);
-  if (m) return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: m[3] };
+  m = url.match(/^git@(github\.com|gitcode\.com):([^\/\s]+)\/([^\/\s]+)/);
+  if (m) { var repo = m[3].replace(/\.git$/, ''); return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: repo }; }
   return null;
 }
 
@@ -800,7 +800,7 @@ var GitCodeProvider = {
           deletions: stats.deletions,
           changedFiles: stats.changedFiles,
           completeness: stats.completeness,
-          url: 'https://gitcode.com/' + owner + '/' + repo + '/pulls/' + pr.number
+          url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
         });
       }).catch(function(err) {
         detailDone++;
@@ -810,7 +810,7 @@ var GitCodeProvider = {
           author: pr.user ? pr.user.login : '', mergedAt: pr.merged_at,
           baseBranch: defaultBranch, additions: 0, deletions: 0, changedFiles: 0,
           completeness: 'failed',
-          url: 'https://gitcode.com/' + owner + '/' + repo + '/pulls/' + pr.number
+          url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
         });
       });
     });
@@ -820,16 +820,18 @@ var GitCodeProvider = {
 
   /** Get PR code stats: try detail fields first, then files endpoint */
   _getPRStats: async function(token, owner, repo, number, signal) {
-    // Try PR detail first
+    // Try PR detail first — validate numeric types (API may return strings)
     try {
       var detail = await this._fetch(
         this.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number, token, signal
       );
-      if (typeof detail.additions === 'number' && typeof detail.deletions === 'number') {
+      var dAdd = parseInt(detail.additions, 10);
+      var dDel = parseInt(detail.deletions, 10);
+      if (!isNaN(dAdd) && !isNaN(dDel)) {
         return {
-          additions: detail.additions,
-          deletions: detail.deletions,
-          changedFiles: detail.changed_files || 0,
+          additions: dAdd,
+          deletions: dDel,
+          changedFiles: parseInt(detail.changed_files, 10) || 0,
           completeness: 'full'
         };
       }
@@ -840,17 +842,21 @@ var GitCodeProvider = {
       this.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number + '/files', token, signal
     );
     if (!Array.isArray(files)) return { additions: 0, deletions: 0, changedFiles: 0, completeness: 'failed' };
-    var additions = 0, deletions = 0, tooLarge = false;
+    var additions = 0, deletions = 0, tooLarge = false, hasUnparsable = false;
     files.forEach(function(f) {
-      if (f.too_large) tooLarge = true;
-      additions += (f.additions || 0);
-      deletions += (f.deletions || 0);
+      // too_large can be at file level or nested under patch
+      if (f.too_large || (f.patch && f.patch.too_large)) tooLarge = true;
+      var fa = parseInt(f.additions, 10);
+      var fd = parseInt(f.deletions, 10);
+      if (isNaN(fa) || isNaN(fd)) { hasUnparsable = true; return; }
+      additions += fa;
+      deletions += fd;
     });
     return {
       additions: additions,
       deletions: deletions,
       changedFiles: files.length,
-      completeness: tooLarge ? 'partial' : 'full'
+      completeness: (tooLarge || hasUnparsable) ? 'partial' : 'full'
     };
   }
 };
@@ -863,6 +869,7 @@ var StatsEngine = {
   summaryRows: [],      // aggregated summary
   filteredPRs: [],      // after user/repo filter
   repoStatuses: [],     // per-repo status from last query
+  failedRepos: [],      // repos that failed entirely (FC-2)
 
   /**
    * Build unique repo list from enabled users and current filters
@@ -885,48 +892,58 @@ var StatsEngine = {
   },
 
   /**
-   * Map PRs to users: for each PR, find matching user by platform login
+   * Map PRs to users: by platform + repo + login (FC-1 fix).
+   * Only matches users who are explicitly associated with that repo.
+   * Unmatched PRs are flagged so they can be excluded from user totals.
    */
   mapPRsToUsers: function(prs, users) {
-    var loginMap = {}; // platform:login → [{user_key, display_name}]
+    // Build map: "platform:login:owner/repo" → {user_key, display_name}
+    var loginRepoMap = {};
     users.forEach(function(u) {
-      if (u.github_login) {
-        var gk = 'github:' + u.github_login.toLowerCase();
-        if (!loginMap[gk]) loginMap[gk] = [];
-        loginMap[gk].push({ user_key: u.user_key, display_name: u.display_name || u.user_key });
+      var parsed = parseRepoUrl(u.repository_url);
+      if (!parsed) return;
+      var repoStr = parsed.owner + '/' + parsed.repo;
+      if (u.github_login && parsed.platform === 'github') {
+        var gk = 'github:' + u.github_login.toLowerCase() + ':' + repoStr;
+        if (!loginRepoMap[gk]) loginRepoMap[gk] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
       }
-      if (u.gitcode_login) {
-        var ck = 'gitcode:' + u.gitcode_login.toLowerCase();
-        if (!loginMap[ck]) loginMap[ck] = [];
-        loginMap[ck].push({ user_key: u.user_key, display_name: u.display_name || u.user_key });
+      if (u.gitcode_login && parsed.platform === 'gitcode') {
+        var ck = 'gitcode:' + u.gitcode_login.toLowerCase() + ':' + repoStr;
+        if (!loginRepoMap[ck]) loginRepoMap[ck] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
       }
     });
     prs.forEach(function(pr) {
-      var lk = pr.platform + ':' + (pr.author || '').toLowerCase();
-      var matches = loginMap[lk];
-      if (matches && matches.length > 0) {
-        pr.userKey = matches[0].user_key;
-        pr.displayName = matches[0].display_name;
+      var lk = pr.platform + ':' + (pr.author || '').toLowerCase() + ':' + pr.repo;
+      var match = loginRepoMap[lk];
+      if (match) {
+        pr.userKey = match.user_key;
+        pr.displayName = match.display_name;
+        pr.matched = true;
       } else {
         pr.userKey = '';
         pr.displayName = pr.author || '(未匹配)';
+        pr.matched = false;
       }
     });
   },
 
   /**
-   * Aggregate PRs into summary rows: one per (platform, userKey, repo)
+   * Aggregate PRs into summary rows: one per (platform, userKey, repo).
+   * Only includes matched PRs in named-user rows; unmatched go to "(未匹配)" group.
    */
   aggregate: function(prs) {
     var groups = {};
     prs.forEach(function(pr) {
-      var key = pr.platform + '|' + (pr.userKey || pr.author) + '|' + pr.repo;
+      var userLabel = pr.matched ? pr.userKey : ('⚠ ' + (pr.author || '未知'));
+      var displayLabel = pr.matched ? pr.displayName : (pr.author || '(未匹配)');
+      var key = pr.platform + '|' + userLabel + '|' + pr.repo;
       if (!groups[key]) {
         groups[key] = {
           platform: pr.platform,
-          userKey: pr.userKey || pr.author,
-          displayName: pr.displayName || pr.author,
+          userKey: userLabel,
+          displayName: displayLabel,
           repo: pr.repo,
+          matched: !!pr.matched,
           prCount: 0, additions: 0, deletions: 0, changedFiles: 0,
           hasPartial: false, hasFailed: false
         };
@@ -938,6 +955,7 @@ var StatsEngine = {
       g.changedFiles += pr.changedFiles;
       if (pr.completeness === 'partial') g.hasPartial = true;
       if (pr.completeness === 'failed') g.hasFailed = true;
+      if (pr.repoPartial) g.hasPartial = true;
     });
     return Object.values(groups);
   },
@@ -1035,8 +1053,11 @@ async function runQuery() {
             escapeHtml(stage) + ' (' + done + totalStr + ')</span>';
         }
       );
+      // FC-2: propagate repo-level partial to each PR so it reaches summary/export
+      if (result.partial) {
+        result.prs.forEach(function(pr) { pr.repoPartial = true; });
+      }
       allPRs = allPRs.concat(result.prs);
-      if (result.partial) anyPartial = true;
       var partialNote = result.partial ? ' ⚠️ 部分统计（超过 1000 条上限）' : '';
       rs.li.innerHTML = '<span class="icon">✅</span><span>' +
         escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + result.prs.length + ' 个已合并 PR' + partialNote + '</span>';
@@ -1061,6 +1082,10 @@ async function runQuery() {
   StatsEngine.mapPRsToUsers(allPRs, users);
   StatsEngine.currentPRs = allPRs;
   StatsEngine.repoStatuses = repoStatuses;
+  // FC-2: track repos that failed entirely so export can include them
+  StatsEngine.failedRepos = repoStatuses
+    .filter(function(rs) { return rs.status === 'failed'; })
+    .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo, error: rs.error }; });
 
   // Apply display filters and render
   renderResults(filters);
@@ -1090,9 +1115,10 @@ function renderResults(filters) {
     return (a.mergedAt || '').localeCompare(b.mergedAt || '');
   });
 
-  // Grand totals
+  // Grand totals — only from matched users
+  var matchedSummary = summary.filter(function(r) { return r.matched; });
   var totals = { prCount: 0, additions: 0, deletions: 0, changedFiles: 0 };
-  summary.forEach(function(r) {
+  matchedSummary.forEach(function(r) {
     totals.prCount += r.prCount;
     totals.additions += r.additions;
     totals.deletions += r.deletions;
@@ -1158,8 +1184,12 @@ function renderResults(filters) {
   }
 
   // Results summary text
-  document.getElementById('results-summary').textContent =
-    '共 ' + prs.length + ' 个 PR，' + summary.length + ' 个用户-仓库组合';
+  var unmatchedCount = summary.filter(function(r) { return !r.matched; }).length;
+  var failedCount = StatsEngine.failedRepos.length;
+  var summaryText = '共 ' + prs.length + ' 个 PR，' + summary.length + ' 个用户-仓库组合';
+  if (unmatchedCount > 0) summaryText += '（含 ' + unmatchedCount + ' 个未匹配作者）';
+  if (failedCount > 0) summaryText += '，' + failedCount + ' 个仓库查询失败';
+  document.getElementById('results-summary').textContent = summaryText;
 
   document.getElementById('results-section').classList.remove('hidden');
 }
@@ -1173,6 +1203,10 @@ function exportCSV(type) {
     var rows = StatsEngine.summaryRows.map(function(r) {
       return [r.platform, r.userKey, r.displayName, r.repo, r.prCount, r.additions, r.deletions,
         r.additions + r.deletions, r.additions - r.deletions, r.changedFiles, StatsEngine.completenessLabel(r)];
+    });
+    // FC-2: append failed repos so export never silently omits failures
+    StatsEngine.failedRepos.forEach(function(fr) {
+      rows.push([fr.platform, '', '', fr.repo, 0, 0, 0, 0, 0, 0, '失败: ' + fr.error]);
     });
     var csv = CsvHelper.generate(headers, rows);
     CsvHelper.download('PR代码变更统计_汇总_' + todayStr() + '.csv', csv);
