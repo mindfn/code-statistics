@@ -870,6 +870,7 @@ var StatsEngine = {
   filteredPRs: [],      // after user/repo filter
   repoStatuses: [],     // per-repo status from last query
   failedRepos: [],      // repos that failed entirely (FC-2)
+  partialRepos: [],     // repos with partial data (FCR-1: survives filtering)
 
   /**
    * Build unique repo list from enabled users and current filters
@@ -1086,6 +1087,10 @@ async function runQuery() {
   StatsEngine.failedRepos = repoStatuses
     .filter(function(rs) { return rs.status === 'failed'; })
     .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo, error: rs.error }; });
+  // FCR-1: track repos with partial data independently so status survives filtering
+  StatsEngine.partialRepos = repoStatuses
+    .filter(function(rs) { return rs.status === 'partial'; })
+    .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo }; });
 
   // Apply display filters and render
   renderResults(filters);
@@ -1186,8 +1191,10 @@ function renderResults(filters) {
   // Results summary text
   var unmatchedCount = summary.filter(function(r) { return !r.matched; }).length;
   var failedCount = StatsEngine.failedRepos.length;
+  var partialCount = StatsEngine.partialRepos.length;
   var summaryText = '共 ' + prs.length + ' 个 PR，' + summary.length + ' 个用户-仓库组合';
   if (unmatchedCount > 0) summaryText += '（含 ' + unmatchedCount + ' 个未匹配作者）';
+  if (partialCount > 0) summaryText += '，' + partialCount + ' 个仓库为部分统计';
   if (failedCount > 0) summaryText += '，' + failedCount + ' 个仓库查询失败';
   document.getElementById('results-summary').textContent = summaryText;
 
@@ -1203,6 +1210,10 @@ function exportCSV(type) {
     var rows = StatsEngine.summaryRows.map(function(r) {
       return [r.platform, r.userKey, r.displayName, r.repo, r.prCount, r.additions, r.deletions,
         r.additions + r.deletions, r.additions - r.deletions, r.changedFiles, StatsEngine.completenessLabel(r)];
+    });
+    // FCR-1: append partial repos so export never silently omits partial status
+    StatsEngine.partialRepos.forEach(function(pr) {
+      rows.push([pr.platform, '', '', pr.repo, '', '', '', '', '', '', '部分（超过上限）']);
     });
     // FC-2: append failed repos so export never silently omits failures
     StatsEngine.failedRepos.forEach(function(fr) {
