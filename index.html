@@ -674,6 +674,11 @@ var GitHubProvider = {
       await sleep(2200); // Search rate limit: 30/min → ~2s between requests
     }
     if (totalCount > 1000) partial = true;
+    var partialReason = '';
+    if (partial) {
+      if (totalCount > 1000) partialReason = '超过 1000 条搜索上限';
+      else partialReason = '搜索结果不完整';
+    }
 
     // Fetch PR details with concurrency control
     var limiter = createLimiter(5, 100);
@@ -720,7 +725,7 @@ var GitHubProvider = {
       });
     });
     await Promise.all(detailPromises);
-    return { prs: prs, partial: partial };
+    return { prs: prs, partial: partial, partialReason: partialReason };
   }
 };
 
@@ -1070,10 +1075,11 @@ async function runQuery() {
         result.prs.forEach(function(pr) { pr.repoPartial = true; });
       }
       allPRs = allPRs.concat(result.prs);
-      var partialNote = result.partial ? ' ⚠️ 部分统计（超过 1000 条上限）' : '';
+      var partialNote = result.partial ? (' ⚠️ 部分统计（' + (result.partialReason || '结果可能不完整') + '）') : '';
       rs.li.innerHTML = '<span class="icon">✅</span><span>' +
         escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + result.prs.length + ' 个已合并 PR' + partialNote + '</span>';
       rs.status = result.partial ? 'partial' : 'ok';
+      rs.partialReason = result.partialReason || '';
     } catch(err) {
       if (queryAbort.signal.aborted) {
         rs.li.innerHTML = '<span class="icon">⏸</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 已取消</span>';
@@ -1101,7 +1107,7 @@ async function runQuery() {
   // FCR-1: track repos with partial data independently so status survives filtering
   StatsEngine.partialRepos = repoStatuses
     .filter(function(rs) { return rs.status === 'partial'; })
-    .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo }; });
+    .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo, reason: rs.partialReason || '结果可能不完整' }; });
 
   // Apply display filters and render
   renderResults(filters);
@@ -1224,7 +1230,7 @@ function exportCSV(type) {
     });
     // FCR-1: append partial repos so export never silently omits partial status
     StatsEngine.partialRepos.forEach(function(pr) {
-      rows.push([pr.platform, '', '', pr.repo, '', '', '', '', '', '', '部分（超过上限）']);
+      rows.push([pr.platform, '', '', pr.repo, '', '', '', '', '', '', '部分（' + (pr.reason || '结果可能不完整') + '）']);
     });
     // FC-2: append failed repos so export never silently omits failures
     StatsEngine.failedRepos.forEach(function(fr) {

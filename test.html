@@ -45,7 +45,7 @@ function assertEqual(actual, expected, msg) {
 }
 
 // ========== Wait for iframe to load, then run tests against production code ==========
-document.getElementById('app-frame').addEventListener('load', function() {
+document.getElementById('app-frame').addEventListener('load', async function() {
   var app = this.contentWindow;
   var loadStatus = document.getElementById('load-status');
 
@@ -206,13 +206,79 @@ document.getElementById('app-frame').addEventListener('load', function() {
   mapPRsToUsers(fcr3PRs2, fcr3Users2);
   assert(fcr3PRs2[0].matched === true && fcr3PRs2[0].userKey === 'enabled-second', 'disabled-before-enabled: matches enabled record');
 
-  // --- FCR-5: unparsable metrics must mark partial, not silent 0 ---
-  suite('Unparsable metrics (FCR-5)');
-  // GitCode _getPRStats: changed_files unparsable should fall through to files endpoint
-  // We test the detail shortcut logic directly via the production code path:
-  // If changed_files is not a number, the detail shortcut must NOT return 'full'
+  // --- FCR-4: GitHub incomplete_results behavioral test ---
+  suite('GitHub incomplete_results (FCR-4)');
+  var ghProvider = app.GitHubProvider;
+  var ghOrigFetch = ghProvider._fetch;
+  // Mock _fetch: search returns incomplete_results=true with 1 item, detail returns valid PR
+  var ghFetchCallCount = 0;
+  ghProvider._fetch = function(url) {
+    ghFetchCallCount++;
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({
+        total_count: 1, incomplete_results: true,
+        items: [{ number: 42 }]
+      });
+    }
+    // PR detail
+    return Promise.resolve({
+      number: 42, merged_at: '2026-01-15T10:00:00Z',
+      user: { login: 'testuser' }, base: { ref: 'main' },
+      additions: 10, deletions: 5, changed_files: 2
+    });
+  };
+  var ghResult = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch; // restore immediately
+  assert(ghResult.partial === true, 'incomplete_results=true → partial=true');
+  assert(ghResult.partialReason && ghResult.partialReason.indexOf('不完整') >= 0, 'partialReason mentions incompleteness, not "超过上限"');
+
+  // --- FCR-5: GitHub unparsable metrics behavioral test ---
+  suite('GitHub unparsable metrics (FCR-5)');
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({
+        total_count: 1, incomplete_results: false,
+        items: [{ number: 99 }]
+      });
+    }
+    // PR detail with missing additions field
+    return Promise.resolve({
+      number: 99, merged_at: '2026-01-15T10:00:00Z',
+      user: { login: 'testuser' }, base: { ref: 'main' },
+      additions: undefined, deletions: 5, changed_files: 2
+    });
+  };
+  var ghResult2 = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch; // restore
+  assert(ghResult2.prs.length === 1, 'one PR returned');
+  assert(ghResult2.prs[0].completeness === 'partial', 'missing additions → completeness=partial');
+  assertEqual(ghResult2.prs[0].additions, 0, 'unparsable additions defaults to 0');
+
+  // --- FCR-5: GitCode changed_files unparsable → falls through to files endpoint ---
+  suite('GitCode unparsable changed_files (FCR-5)');
   var gcProvider = app.GitCodeProvider;
-  assert(typeof gcProvider._getPRStats === 'function', 'GitCodeProvider._getPRStats exists');
+  var gcOrigFetch = gcProvider._fetch;
+  var gcFilesEndpointCalled = false;
+  gcProvider._fetch = function(url) {
+    if (url.indexOf('/files') >= 0) {
+      gcFilesEndpointCalled = true;
+      return Promise.resolve([
+        { additions: 10, deletions: 3 },
+        { additions: 5, deletions: 2 }
+      ]);
+    }
+    // Detail endpoint: changed_files is not a number
+    return Promise.resolve({
+      additions: 100, deletions: 50, changed_files: 'N/A'
+    });
+  };
+  var gcResult = await gcProvider._getPRStats('tok', 'org', 'repo', 1, new AbortController().signal);
+  gcProvider._fetch = gcOrigFetch; // restore
+  assert(gcFilesEndpointCalled === true, 'unparsable changed_files → falls through to /files endpoint');
+  assertEqual(gcResult.additions, 15, 'files endpoint additions = 10+5');
+  assertEqual(gcResult.deletions, 5, 'files endpoint deletions = 3+2');
+  assertEqual(gcResult.changedFiles, 2, 'files endpoint changedFiles = file count');
+  assertEqual(gcResult.completeness, 'full', 'files endpoint with valid data = full');
 
   // --- Production code identity check ---
   suite('Production code identity (FCR-2)');
