@@ -665,6 +665,8 @@ var GitHubProvider = {
         token, signal
       );
       if (page === 1) totalCount = data.total_count;
+      // FCR-4: GitHub returns incomplete_results=true when search timed out
+      if (data.incomplete_results) partial = true;
       allItems = allItems.concat(data.items);
       if (onProgress) onProgress('搜索 PR 中', allItems.length, Math.min(totalCount, 1000));
       if (allItems.length >= totalCount || allItems.length >= 1000 || data.items.length < 100) break;
@@ -688,6 +690,11 @@ var GitHubProvider = {
         if (!mergedAt) return;
         if (mergedAt < range.start || mergedAt >= range.end) return;
         if (detail.base && detail.base.ref !== defaultBranch) return;
+        // FCR-5: validate all three metrics; mark partial if any are unparsable
+        var ghAdd = parseInt(detail.additions, 10);
+        var ghDel = parseInt(detail.deletions, 10);
+        var ghFiles = parseInt(detail.changed_files, 10);
+        var ghUnparsable = isNaN(ghAdd) || isNaN(ghDel) || isNaN(ghFiles);
         prs.push({
           platform: 'github',
           repo: owner + '/' + repo,
@@ -695,10 +702,10 @@ var GitHubProvider = {
           author: detail.user ? detail.user.login : '',
           mergedAt: detail.merged_at,
           baseBranch: detail.base ? detail.base.ref : '',
-          additions: detail.additions || 0,
-          deletions: detail.deletions || 0,
-          changedFiles: detail.changed_files || 0,
-          completeness: 'full',
+          additions: isNaN(ghAdd) ? 0 : ghAdd,
+          deletions: isNaN(ghDel) ? 0 : ghDel,
+          changedFiles: isNaN(ghFiles) ? 0 : ghFiles,
+          completeness: ghUnparsable ? 'partial' : 'full',
           url: 'https://github.com/' + owner + '/' + repo + '/pull/' + detail.number
         });
       }).catch(function(err) {
@@ -827,11 +834,13 @@ var GitCodeProvider = {
       );
       var dAdd = parseInt(detail.additions, 10);
       var dDel = parseInt(detail.deletions, 10);
-      if (!isNaN(dAdd) && !isNaN(dDel)) {
+      var dFiles = parseInt(detail.changed_files, 10);
+      // FCR-5: all three metrics must be valid for the detail shortcut
+      if (!isNaN(dAdd) && !isNaN(dDel) && !isNaN(dFiles)) {
         return {
           additions: dAdd,
           deletions: dDel,
-          changedFiles: parseInt(detail.changed_files, 10) || 0,
+          changedFiles: dFiles,
           completeness: 'full'
         };
       }
@@ -899,8 +908,10 @@ var StatsEngine = {
    */
   mapPRsToUsers: function(prs, users) {
     // Build map: "platform:login:owner/repo" → {user_key, display_name}
+    // FCR-3: only enabled users participate in attribution
     var loginRepoMap = {};
     users.forEach(function(u) {
+      if (u.enabled === false) return;
       var parsed = parseRepoUrl(u.repository_url);
       if (!parsed) return;
       var repoStr = parsed.owner + '/' + parsed.repo;
