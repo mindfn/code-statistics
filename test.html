@@ -117,11 +117,11 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(csv.indexOf("'=danger") > 0, 'formula sanitized');
   assert(csv.indexOf('\r\n') > 0, 'uses CRLF');
 
-  // --- User mapping (FC-1: repo-aware) ---
-  suite('User mapping (FC-1)');
+  // --- User mapping (platform:login matching) ---
+  suite('User mapping');
   var testUsers = [
-    { user_key: 'alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repoA', enabled: true },
-    { user_key: 'bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', repository_url: 'https://github.com/org/repoB', enabled: true }
+    { user_key: 'alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', enabled: true },
+    { user_key: 'bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', enabled: true }
   ];
   var testPRs = [
     { platform: 'github', repo: 'org/repoA', author: 'alice-gh', number: 1, additions: 10, deletions: 5, changedFiles: 1, completeness: 'full' },
@@ -130,7 +130,7 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   ];
   mapPRsToUsers(testPRs, testUsers);
   assert(testPRs[0].matched === true && testPRs[0].userKey === 'alice', 'alice matched on repoA');
-  assert(testPRs[1].matched === false, 'alice NOT matched on repoB (not associated)');
+  assert(testPRs[1].matched === true && testPRs[1].userKey === 'alice', 'alice matched on repoB (platform:login match, no repo filter)');
   assert(testPRs[2].matched === false, 'unknown-dev not matched');
 
   // --- Aggregate (FC-1: unmatched separation, FC-2: partial propagation) ---
@@ -161,16 +161,15 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     assert(changes === r.additions + r.deletions, 'changes = additions + deletions for ' + r.userKey);
   });
 
-  // --- Request dedup: buildRepoList ---
+  // --- Request dedup: buildRepoList from config repos ---
   suite('Request dedup');
-  var dedup_users = [
-    { user_key: 'u1', github_login: 'u1', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
-    { user_key: 'u2', github_login: 'u2', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
-    { user_key: 'u3', github_login: 'u3', gitcode_login: '', repository_url: 'https://github.com/org/other', enabled: true },
-    { user_key: 'u4', github_login: 'u4', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: false }
+  var configRepos = [
+    'https://github.com/org/repo',
+    'https://github.com/org/repo',
+    'https://github.com/org/other'
   ];
-  var repoList = app.StatsEngine.buildRepoList(dedup_users, {});
-  assertEqual(repoList.length, 2, 'two users on same repo → one fetch (AC-B4)');
+  var repoList = app.StatsEngine.buildRepoList(configRepos, {});
+  assertEqual(repoList.length, 2, 'duplicate repo URLs → deduplicated to 2');
 
   // --- FCR-1: partialRepos tracking ---
   suite('partialRepos tracking (FCR-1)');
@@ -185,8 +184,8 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   // --- FCR-3: disabled users must not get PR attribution ---
   suite('Disabled user exclusion (FCR-3)');
   var fcr3Users = [
-    { user_key: 'active-alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
-    { user_key: 'disabled-bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: false }
+    { user_key: 'active-alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', enabled: true },
+    { user_key: 'disabled-bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', enabled: false }
   ];
   var fcr3PRs = [
     { platform: 'github', repo: 'org/repo', author: 'alice-gh', number: 1, additions: 10, deletions: 5, changedFiles: 1, completeness: 'full' },
@@ -197,8 +196,8 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(fcr3PRs[1].matched === false, 'disabled user bob NOT matched');
   // Edge case: disabled record listed before enabled, same login
   var fcr3Users2 = [
-    { user_key: 'disabled-first', display_name: 'Alice D', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: false },
-    { user_key: 'enabled-second', display_name: 'Alice E', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true }
+    { user_key: 'disabled-first', display_name: 'Alice D', github_login: 'alice-gh', gitcode_login: '', enabled: false },
+    { user_key: 'enabled-second', display_name: 'Alice E', github_login: 'alice-gh', gitcode_login: '', enabled: true }
   ];
   var fcr3PRs2 = [
     { platform: 'github', repo: 'org/repo', author: 'alice-gh', number: 3, additions: 5, deletions: 1, changedFiles: 1, completeness: 'full' }
@@ -288,6 +287,8 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(typeof app.StatsEngine.completenessClass === 'function', 'StatsEngine.completenessClass exists in production');
   assert(typeof app.GitHubProvider === 'object', 'GitHubProvider exists in production');
   assert(typeof app.GitCodeProvider === 'object', 'GitCodeProvider exists in production');
+  assert(typeof app.collectFilters === 'function', 'collectFilters exists in production');
+  assert(typeof app.selectSummaryRow === 'function', 'selectSummaryRow exists in production');
 
   // ==================== Render Results ====================
   renderTestResults();

@@ -10,9 +10,9 @@
 
 ## 快速开始
 
-1. **配置** — 填入 GitHub / GitCode 的 Token，点击"测试连接"确认可用。
-2. **用户信息** — 添加需要统计的用户及其关联仓库（手工新增或 CSV 导入）。
-3. **统计数据** — 选择时间范围，点击"查询"，等待完成后查看汇总和 PR 明细，可导出 CSV。
+1. **配置** — 填入 GitHub / GitCode 的 Token，点击"测试连接"确认可用；在"仓库管理"中添加需要统计的仓库。
+2. **用户** — 添加需要统计的用户及其平台账号（手工新增或 CSV 导入），启用/禁用通过开关控制。
+3. **统计数据** — 选择时间范围和用户范围（已匹配/全部/仅未匹配），点击"查询"；点击汇总行查看 PR 明细，可导出 CSV。
 
 ## Token 权限
 
@@ -50,13 +50,14 @@ Token 仅保存在浏览器 `localStorage`，不会进入导出的 CSV、日志�
 ### 用户导入 CSV
 
 ```csv
-user_key,display_name,email,github_login,gitcode_login,repository_url,enabled
+user_key,display_name,email,github_login,gitcode_login
 ```
 
 - `user_key`：唯一标识（必填）
-- `repository_url`：GitHub 或 GitCode 仓库 URL（必填）
-- `enabled`：`true` / `false`，默认 `true`
-- 一行代表一个"用户-仓库"关系，同一用户可关联多个仓库
+- `display_name`：显示名（可选）
+- `email`：邮箱（可选，仅作人员资料）
+- `github_login` / `gitcode_login`：平台账号（至少填一个）
+- 仓库在"配置"页签统一管理，不再绑定到用户
 
 可从页面下载模板。
 
