@@ -474,8 +474,14 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     { platform: 'github', userKey: 'bob', displayName: 'Bob', repo: 'org/repo', matched: true, prCount: 0, commentCount: 1, approveCount: 1, additions: 0, deletions: 0, changedFiles: 0, completeness: 'full' },
     { platform: 'github', userKey: '⚠ unknown', displayName: 'unknown', repo: 'org/repo', matched: false, prCount: 1, commentCount: 0, approveCount: 0, additions: 3, deletions: 1, changedFiles: 1, completeness: 'full' }
   ];
-  app.StatsEngine.partialRepos = [{ platform: 'github', repo: 'org/partial', reason: 'rate limited' }];
-  app.StatsEngine.failedRepos = [{ platform: 'github', repo: 'org/failed', error: 'timeout' }];
+  app.StatsEngine.partialRepos = [
+    { platform: 'github', repo: 'org/repo', reason: 'rate limited' },
+    { platform: 'gitcode', repo: 'empty/no-activity', reason: 'approve unavailable' }
+  ];
+  app.StatsEngine.failedRepos = [
+    { platform: 'github', repo: 'org/repo', error: 'timeout' },
+    { platform: 'gitcode', repo: 'empty/failed', error: 'network error' }
+  ];
   app.exportCSV('summary');
   app.CsvHelper.download = origDownload;
 
@@ -484,8 +490,11 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(summaryCsv.indexOf('alice') >= 0, 'matched user alice exported');
   assert(summaryCsv.indexOf('bob') >= 0, 'matched user bob exported');
   assert(summaryCsv.indexOf('⚠ unknown') < 0, 'unmatched user NOT exported when matched selected');
-  assert(summaryCsv.indexOf('org/partial') >= 0, 'partial repo appended to summary CSV');
-  assert(summaryCsv.indexOf('org/failed') >= 0, 'failed repo appended to summary CSV');
+  assert(summaryCsv.indexOf('rate limited') >= 0, 'partial diagnostic kept for a visible repo');
+  assert(summaryCsv.indexOf('timeout') >= 0, 'failed diagnostic kept for a visible repo');
+  assert(summaryCsv.indexOf('empty/no-activity') < 0, 'partial repo without visible data is omitted');
+  assert(summaryCsv.indexOf('empty/failed') < 0, 'failed repo without visible data is omitted');
+  assert(summaryCsv.indexOf('gitcode') < 0, 'platform without visible data is omitted');
 
   // --- exportCSV detail respects user type filter (FC-1) ---
   suite('exportCSV detail filter');
@@ -505,6 +514,51 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(detailCsv.indexOf('unknown') >= 0, 'unmatched activity exported in detail CSV');
   assert(detailCsv.indexOf('alice-gh') < 0, 'matched activity NOT exported when unmatched selected');
 
+  // --- Successful connection test persists the entered token ---
+  suite('testConnection auto-saves verified token');
+  var originalLoadConfig = app.Storage.loadConfig;
+  var originalSaveConfig = app.Storage.saveConfig;
+  var originalGitHubConnection = app.GitHubProvider.testConnection;
+  var savedConfig = null;
+  var testedToken = '';
+  app.Storage.loadConfig = function() { return { githubToken: '', gitcodeToken: '', repositories: [] }; };
+  app.Storage.saveConfig = function(config) { savedConfig = Object.assign({}, config); };
+  app.GitHubProvider.testConnection = function(token) {
+    testedToken = token;
+    return Promise.resolve({ login: 'verified-user', name: 'Verified User' });
+  };
+  app.document.getElementById('github-token').value = 'ghp_verified_token';
+  await app.testConnection('github');
+  assertEqual(testedToken, 'ghp_verified_token', 'connection tests the entered token');
+  assert(savedConfig && savedConfig.githubToken === 'ghp_verified_token', 'verified token is persisted automatically');
+  assert(app.document.getElementById('github-status').textContent.indexOf('已连接并保存') >= 0, 'success status explains auto-save');
+  app.Storage.loadConfig = originalLoadConfig;
+  app.Storage.saveConfig = originalSaveConfig;
+  app.GitHubProvider.testConnection = originalGitHubConnection;
+
+  suite('testConnection failure does not save token');
+  var failedSaveCount = 0;
+  app.Storage.loadConfig = function() { return { githubToken: 'previous-token', gitcodeToken: '', repositories: [] }; };
+  app.Storage.saveConfig = function() { failedSaveCount++; };
+  app.GitHubProvider.testConnection = function() { return Promise.reject(new Error('GitHub API 401')); };
+  app.document.getElementById('github-token').value = 'invalid-new-token';
+  await app.testConnection('github');
+  assertEqual(failedSaveCount, 0, 'failed verification does not overwrite the saved token');
+  assert(app.document.getElementById('github-status').textContent.indexOf('认证失败') >= 0, 'failed verification remains visibly failed');
+  app.Storage.loadConfig = originalLoadConfig;
+  app.Storage.saveConfig = originalSaveConfig;
+  app.GitHubProvider.testConnection = originalGitHubConnection;
+
+  // --- Finishing UI semantics: favicon, privacy notice and filter action layout ---
+  suite('Finishing UI semantics');
+  var favicon = app.document.querySelector('link[rel="icon"]');
+  assert(favicon && favicon.getAttribute('href').indexOf('data:image/svg+xml') === 0, 'inline SVG favicon is configured');
+  var privacyNotice = app.document.getElementById('local-data-notice');
+  assert(privacyNotice && privacyNotice.textContent.indexOf('localStorage') >= 0, 'config page explains localStorage persistence');
+  assert(privacyNotice && privacyNotice.textContent.indexOf('不会上传') >= 0, 'config page explains data is not uploaded');
+  var filterActions = app.document.querySelector('.filter-actions');
+  assert(filterActions && filterActions.contains(app.document.getElementById('btn-query')), 'query button uses dedicated aligned filter action group');
+
   // --- renderResults renders rows and hides grand total in unmatched view (FC-7 / FC-9) ---
   suite('renderResults DOM');
   app.document.getElementById('stat-user-type').value = 'all';
@@ -519,6 +573,10 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   var summaryBody = app.document.getElementById('summary-tbody');
   assert(summaryBody.querySelectorAll('.summary-row').length === 2, 'two summary rows rendered');
   assert(summaryBody.querySelector('.grand-total'), 'grand total row shown in all view');
+  var completenessCell = summaryBody.querySelector('.completeness-cell');
+  assert(completenessCell && completenessCell.querySelector('.completeness-full'), 'completeness badge is wrapped in a table cell');
+  assert(completenessCell && app.getComputedStyle(completenessCell).textAlign === 'center', 'completeness cell is horizontally centered');
+  assert(completenessCell && app.getComputedStyle(completenessCell).verticalAlign === 'middle', 'completeness cell is vertically centered');
 
   // Switch to unmatched-only view
   app.document.getElementById('stat-user-type').value = 'unmatched';
