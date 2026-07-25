@@ -26,8 +26,8 @@ h1 { font-size: 1.3rem; margin-bottom: 16px; }
 <!--
   FCR-2 fix: Load production code from index.html via a hidden iframe.
   Tests run against the REAL production functions (parseRepoUrl, CsvHelper,
-  StatsEngine, repoKey, escapeHtml), not copies.
-  Requires HTTP server (e.g. python3 -m http.server 8901) — same as Playwright tests.
+  StatsEngine, GitHubProvider, GitCodeProvider), not copies.
+  Requires HTTP server (e.g. python3 -m http.server 8901).
 -->
 <iframe id="app-frame" src="index.html" style="display:none"></iframe>
 
@@ -51,7 +51,7 @@ document.getElementById('app-frame').addEventListener('load', async function() {
 
   // Verify production functions are accessible
   var requiredFns = ['parseRepoUrl', 'escapeHtml', 'repoKey'];
-  var requiredObjs = ['CsvHelper', 'StatsEngine'];
+  var requiredObjs = ['CsvHelper', 'StatsEngine', 'GitHubProvider', 'GitCodeProvider'];
   var missing = [];
   requiredFns.forEach(function(fn) { if (typeof app[fn] !== 'function') missing.push(fn); });
   requiredObjs.forEach(function(obj) { if (typeof app[obj] !== 'object' || app[obj] === null) missing.push(obj); });
@@ -63,17 +63,14 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   }
   loadStatus.style.display = 'none';
 
-  // Alias production functions for cleaner test code
+  // Alias production functions
   var parseRepoUrl = app.parseRepoUrl;
   var CsvHelper = app.CsvHelper;
   var escapeHtml = app.escapeHtml;
   var repoKey = app.repoKey;
-
-  // Create a fresh StatsEngine-like caller that delegates to production methods
-  // We don't use app.StatsEngine directly because it holds mutable state from the UI;
-  // instead we call its pure methods with test data.
-  var mapPRsToUsers = app.StatsEngine.mapPRsToUsers.bind(app.StatsEngine);
+  var mapActivitiesToUsers = app.StatsEngine.mapActivitiesToUsers.bind(app.StatsEngine);
   var aggregate = app.StatsEngine.aggregate.bind(app.StatsEngine);
+  var applyDisplayFilters = app.StatsEngine.applyDisplayFilters.bind(app.StatsEngine);
 
   // ==================== Test Suites ====================
 
@@ -117,45 +114,252 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(csv.indexOf("'=danger") > 0, 'formula sanitized');
   assert(csv.indexOf('\r\n') > 0, 'uses CRLF');
 
-  // --- User mapping (platform:login matching) ---
-  suite('User mapping');
+  // --- Activity mapping (platform:login matching) ---
+  suite('Activity mapping');
   var testUsers = [
     { user_key: 'alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', enabled: true },
     { user_key: 'bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', enabled: true }
   ];
-  var testPRs = [
-    { platform: 'github', repo: 'org/repoA', author: 'alice-gh', number: 1, additions: 10, deletions: 5, changedFiles: 1, completeness: 'full' },
-    { platform: 'github', repo: 'org/repoB', author: 'alice-gh', number: 2, additions: 20, deletions: 10, changedFiles: 2, completeness: 'full' },
-    { platform: 'github', repo: 'org/repoA', author: 'unknown-dev', number: 3, additions: 5, deletions: 1, changedFiles: 1, completeness: 'full' }
+  var testActivities = [
+    { platform: 'github', repository: 'org/repoA', actor_login: 'alice-gh', activity_type: 'development', additions: 10 },
+    { platform: 'github', repository: 'org/repoB', actor_login: 'alice-gh', activity_type: 'comment' },
+    { platform: 'github', repository: 'org/repoA', actor_login: 'unknown-dev', activity_type: 'development' }
   ];
-  mapPRsToUsers(testPRs, testUsers);
-  assert(testPRs[0].matched === true && testPRs[0].userKey === 'alice', 'alice matched on repoA');
-  assert(testPRs[1].matched === true && testPRs[1].userKey === 'alice', 'alice matched on repoB (platform:login match, no repo filter)');
-  assert(testPRs[2].matched === false, 'unknown-dev not matched');
+  mapActivitiesToUsers(testActivities, testUsers);
+  assert(testActivities[0].matched === true && testActivities[0].user_key === 'alice', 'alice dev matched');
+  assert(testActivities[1].matched === true && testActivities[1].user_key === 'alice', 'alice comment matched cross-repo');
+  assert(testActivities[2].matched === false, 'unknown-dev not matched');
 
-  // --- Aggregate (FC-1: unmatched separation, FC-2: partial propagation) ---
-  suite('Aggregate (FC-1 + FC-2)');
-  var testPRs2 = [
-    { platform: 'github', repo: 'org/repo', author: 'alice', userKey: 'alice', displayName: 'Alice', matched: true, additions: 100, deletions: 50, changedFiles: 3, completeness: 'full' },
-    { platform: 'github', repo: 'org/repo', author: 'alice', userKey: 'alice', displayName: 'Alice', matched: true, additions: 200, deletions: 30, changedFiles: 5, completeness: 'full', repoPartial: true },
-    { platform: 'github', repo: 'org/repo', author: 'outsider', userKey: '', displayName: 'outsider', matched: false, additions: 50, deletions: 10, changedFiles: 2, completeness: 'full' }
+  // --- Aggregate: A/B/C activity types ---
+  suite('Aggregate (A/B/C)');
+  var abcActivities = [
+    { platform: 'github', repository: 'org/repo', actor_login: 'alice-gh', user_key: 'alice', display_name: 'Alice', matched: true, activity_type: 'development', additions: 100, deletions: 50, changed_files: 3, completeness: 'full' },
+    { platform: 'github', repository: 'org/repo', actor_login: 'bob-gh', user_key: 'bob', display_name: 'Bob', matched: true, activity_type: 'comment', completeness: 'full' },
+    { platform: 'github', repository: 'org/repo', actor_login: 'bob-gh', user_key: 'bob', display_name: 'Bob', matched: true, activity_type: 'comment', completeness: 'full' },
+    { platform: 'github', repository: 'org/repo', actor_login: 'carol-gh', user_key: 'carol', display_name: 'Carol', matched: true, activity_type: 'approval', completeness: 'full' }
   ];
-  var agg = aggregate(testPRs2);
-  var aliceRow = agg.find(function(r) { return r.matched; });
-  var outsiderRow = agg.find(function(r) { return !r.matched; });
+  var abcAgg = aggregate(abcActivities);
+  var aliceRow = abcAgg.find(function(r) { return r.userKey === 'alice'; });
+  var bobRow = abcAgg.find(function(r) { return r.userKey === 'bob'; });
+  var carolRow = abcAgg.find(function(r) { return r.userKey === 'carol'; });
   assert(aliceRow, 'alice row exists');
-  assertEqual(aliceRow.prCount, 2, 'alice has 2 PRs');
-  assertEqual(aliceRow.additions, 300, 'alice additions = 100+200');
-  assertEqual(aliceRow.deletions, 80, 'alice deletions = 50+30');
-  assert(aliceRow.hasPartial === true, 'FC-2: repoPartial propagated to summary');
-  assert(outsiderRow, 'outsider row exists');
-  assert(!outsiderRow.matched, 'outsider marked as unmatched');
-  assertEqual(outsiderRow.prCount, 1, 'outsider has 1 PR');
+  assertEqual(aliceRow.prCount, 1, 'alice 1 development');
+  assertEqual(aliceRow.commentCount, 0, 'alice 0 comments');
+  assertEqual(aliceRow.approveCount, 0, 'alice 0 approvals');
+  assertEqual(aliceRow.additions, 100, 'alice additions');
+  assert(bobRow, 'bob row exists');
+  assertEqual(bobRow.prCount, 0, 'bob 0 development');
+  assertEqual(bobRow.commentCount, 2, 'bob 2 comments');
+  assertEqual(bobRow.approveCount, 0, 'bob 0 approvals');
+  assertEqual(bobRow.additions, 0, 'bob code 0');
+  assert(carolRow, 'carol row exists');
+  assertEqual(carolRow.approveCount, 1, 'carol 1 approval');
+
+  // --- Display filters ---
+  suite('Display filters');
+  var filtered = applyDisplayFilters(abcActivities, { platform: 'github', user: 'bob', repo: 'org/repo' });
+  assertEqual(filtered.length, 2, 'filter to bob activities');
+
+  // --- GitHub fetchCollaboration: comments + approvals ---
+  suite('GitHub fetchCollaboration');
+  var ghProvider = app.GitHubProvider;
+  var ghOrigFetch = ghProvider._fetch;
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/issues/') >= 0) {
+      return Promise.resolve([
+        { id: 1, user: { login: 'bob-gh' }, created_at: '2026-01-10T10:00:00Z', body: 'looks good', html_url: 'https://github.com/org/repo/issues/1' }
+      ]);
+    }
+    if (url.indexOf('/pulls/') >= 0 && url.indexOf('/comments') >= 0) {
+      return Promise.resolve([
+        { id: 2, user: { login: 'bob-gh' }, created_at: '2026-01-10T11:00:00Z', body: 'nit', html_url: 'https://github.com/org/repo/pull/1' }
+      ]);
+    }
+    if (url.indexOf('/pulls/') >= 0 && url.indexOf('/reviews') >= 0) {
+      return Promise.resolve([
+        { id: 3, user: { login: 'carol-gh' }, submitted_at: '2026-01-10T12:00:00Z', state: 'APPROVED', body: '' },
+        { id: 4, user: { login: 'carol-gh' }, submitted_at: '2026-01-10T13:00:00Z', state: 'COMMENTED', body: 'thanks' }
+      ]);
+    }
+    return Promise.resolve({});
+  };
+  var ghCollab = await ghProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR One', mergedAt: '2026-01-15T10:00:00Z', url: 'https://github.com/org/repo/pull/1' }, new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch;
+  assert(ghCollab.activities.length === 4, 'github collab: 2 comments + 1 review_body + 1 approval = 4');
+  var ghComments = ghCollab.activities.filter(function(a) { return a.activity_type === 'comment'; });
+  var ghApprovals = ghCollab.activities.filter(function(a) { return a.activity_type === 'approval'; });
+  assertEqual(ghComments.length, 3, '3 comments total');
+  assertEqual(ghApprovals.length, 1, '1 approval after state collapse');
+  assertEqual(ghApprovals[0].actor_login, 'carol-gh', 'carol is approver');
+  assert(ghCollab.partial === false, 'github collab not partial');
+
+  // --- GitHub approve state collapse: APPROVED then CHANGES_REQUESTED -> no approve ---
+  suite('GitHub approve state collapse');
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/reviews') >= 0) {
+      return Promise.resolve([
+        { id: 1, user: { login: 'carol-gh' }, submitted_at: '2026-01-10T12:00:00Z', state: 'APPROVED', body: '' },
+        { id: 2, user: { login: 'carol-gh' }, submitted_at: '2026-01-10T13:00:00Z', state: 'CHANGES_REQUESTED', body: '' }
+      ]);
+    }
+    return Promise.resolve([]);
+  };
+  var ghCollab2 = await ghProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch;
+  var ghApprovals2 = ghCollab2.activities.filter(function(a) { return a.activity_type === 'approval'; });
+  assertEqual(ghApprovals2.length, 0, 'APPROVED then CHANGES_REQUESTED -> no approval');
+
+  // --- GitHub COMMENTED does not overwrite APPROVED ---
+  suite('GitHub COMMENTED does not overwrite APPROVED');
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/reviews') >= 0) {
+      return Promise.resolve([
+        { id: 1, user: { login: 'carol-gh' }, submitted_at: '2026-01-10T12:00:00Z', state: 'APPROVED', body: '' },
+        { id: 2, user: { login: 'carol-gh' }, submitted_at: '2026-01-10T13:00:00Z', state: 'COMMENTED', body: 'thanks' }
+      ]);
+    }
+    return Promise.resolve([]);
+  };
+  var ghCollab3 = await ghProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch;
+  var ghApprovals3 = ghCollab3.activities.filter(function(a) { return a.activity_type === 'approval'; });
+  var ghComments3 = ghCollab3.activities.filter(function(a) { return a.activity_type === 'comment'; });
+  assertEqual(ghApprovals3.length, 1, 'COMMENTED after APPROVED still keeps approval');
+  assertEqual(ghComments3.length, 1, 'COMMENTED body becomes comment');
+
+  // --- GitHub collaboration partial propagation ---
+  suite('GitHub collaboration partial propagation');
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/issues/') >= 0) throw new Error('fail');
+    return Promise.resolve([]);
+  };
+  var ghCollabPartial = await ghProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch;
+  assert(ghCollabPartial.partial === true, 'failed issue comments -> partial');
+  assert(ghCollabPartial.partialReason.indexOf('Issue comments') >= 0, 'partial reason mentions issue comments');
+
+  // --- GitCode fetchCollaboration: comments + approvals ---
+  suite('GitCode fetchCollaboration');
+  var gcProvider = app.GitCodeProvider;
+  var gcOrigFetch = gcProvider._fetch;
+  gcProvider._fetch = function(url) {
+    if (url.indexOf('/comments') >= 0) {
+      return Promise.resolve([
+        { id: 10, user: { login: 'bob-gc' }, created_at: '2026-01-10T10:00:00Z', body: 'ok', type: 'comment', html_url: 'https://gitcode.com/org/repo/pulls/1' }
+      ]);
+    }
+    if (url.indexOf('/pulls/1') >= 0 && url.indexOf('/comments') < 0) {
+      return Promise.resolve({
+        approval_reviewers: [
+          { login: 'carol-gc', accept: true },
+          { login: 'dave-gc', accept: false }
+        ],
+        assignees: [
+          { login: 'carol-gc', accept: true }
+        ]
+      });
+    }
+    return Promise.resolve({});
+  };
+  var gcCollab = await gcProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR One', mergedAt: '2026-01-15T10:00:00Z', url: 'https://gitcode.com/org/repo/pulls/1' }, new AbortController().signal, function(){});
+  gcProvider._fetch = gcOrigFetch;
+  var gcComments = gcCollab.activities.filter(function(a) { return a.activity_type === 'comment'; });
+  var gcApprovals = gcCollab.activities.filter(function(a) { return a.activity_type === 'approval'; });
+  assertEqual(gcComments.length, 1, 'gitcode 1 comment');
+  assertEqual(gcApprovals.length, 1, 'gitcode 1 approval (carol deduped)');
+  assertEqual(gcApprovals[0].actor_login, 'carol-gc', 'carol is approver');
+  assert(gcCollab.partial === false, 'gitcode collab not partial');
+
+  // --- GitCode accept=false excluded ---
+  suite('GitCode accept=false excluded');
+  gcProvider._fetch = function(url) {
+    if (url.indexOf('/pulls/1') >= 0 && url.indexOf('/comments') < 0) {
+      return Promise.resolve({ approval_reviewers: [{ login: 'dave-gc', accept: false }], assignees: [] });
+    }
+    return Promise.resolve([]);
+  };
+  var gcCollab2 = await gcProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  gcProvider._fetch = gcOrigFetch;
+  var gcApprovals2 = gcCollab2.activities.filter(function(a) { return a.activity_type === 'approval'; });
+  assertEqual(gcApprovals2.length, 0, 'accept=false excluded');
+
+  // --- Provider regression: GitHub comment dedup by source_type + source_id ---
+  suite('GitHub comment dedup by source_type:source_id');
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/issues/') >= 0) {
+      return Promise.resolve([{ id: 42, user: { login: 'bob-gh' }, created_at: '2026-01-10T10:00:00Z', body: 'issue', html_url: 'u1' }]);
+    }
+    if (url.indexOf('/pulls/') >= 0 && url.indexOf('/comments') >= 0) {
+      return Promise.resolve([{ id: 42, user: { login: 'bob-gh' }, created_at: '2026-01-10T11:00:00Z', body: 'review', html_url: 'u2' }]);
+    }
+    if (url.indexOf('/reviews') >= 0) return Promise.resolve([]);
+    return Promise.resolve([]);
+  };
+  var ghDedup = await ghProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch;
+  var issueComments = ghDedup.activities.filter(function(a) { return a.source_type === 'issue_comment'; });
+  var reviewComments = ghDedup.activities.filter(function(a) { return a.source_type === 'review_comment'; });
+  assertEqual(issueComments.length, 1, 'duplicate issue_comment id deduped to 1');
+  assertEqual(reviewComments.length, 1, 'duplicate review_comment id deduped to 1');
+  assertEqual(ghDedup.activities.length, 2, 'different source_types with same id both kept');
+
+  // --- Provider regression: GitCode source_type prefers comment_type ---
+  suite('GitCode source_type prefers comment_type');
+  gcProvider._fetch = function(url) {
+    if (url.indexOf('/comments') >= 0) {
+      return Promise.resolve([{ id: 1, user: { login: 'bob-gc' }, created_at: '2026-01-10T10:00:00Z', body: 'x', type: 'comment', comment_type: 'pr_comment' }]);
+    }
+    return Promise.resolve({ approval_reviewers: [], assignees: [] });
+  };
+  var gcType = await gcProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  gcProvider._fetch = gcOrigFetch;
+  assertEqual(gcType.activities.length, 1, 'one comment activity');
+  assertEqual(gcType.activities[0].source_type, 'pr_comment', 'comment_type takes priority over type');
+
+  // --- Provider regression: GitCode approve case-insensitive dedup ---
+  suite('GitCode approve case-insensitive dedup');
+  gcProvider._fetch = function(url) {
+    if (url.indexOf('/comments') >= 0) return Promise.resolve([]);
+    return Promise.resolve({ approval_reviewers: [{ login: 'Carol-gc', accept: true }, { login: 'carol-gc', accept: true }], assignees: [] });
+  };
+  var gcCase = await gcProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  gcProvider._fetch = gcOrigFetch;
+  var gcCaseApprovals = gcCase.activities.filter(function(a) { return a.activity_type === 'approval'; });
+  assertEqual(gcCaseApprovals.length, 1, 'Carol/carol deduped to one approval');
+  assertEqual(gcCaseApprovals[0].actor_login, 'Carol-gc', 'original casing preserved');
+
+  // --- Provider regression: _fetchPaged non-array response propagates partial ---
+  suite('GitHub _fetchPaged non-array response');
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/issues/') >= 0) return Promise.resolve({ not: 'array' });
+    return Promise.resolve([]);
+  };
+  var ghBad = await ghProvider.fetchCollaboration('tok', 'org', 'repo', { number: 1, title: 'PR', mergedAt: '', url: '' }, new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch;
+  assert(ghBad.partial === true, 'non-array response marks partial');
+  assert(ghBad.partialReason.indexOf('返回格式异常') >= 0, 'partialReason mentions format error');
+
+  // --- Provider regression: createLimiter max concurrency ---
+  suite('createLimiter max concurrency <= 3');
+  var limiter = app.createLimiter(3, 0);
+  var running = 0, maxRunning = 0;
+  var limiterTasks = [];
+  for (var i = 0; i < 5; i++) {
+    limiterTasks.push(limiter(function() {
+      running++;
+      if (running > maxRunning) maxRunning = running;
+      return new Promise(function(resolve) {
+        setTimeout(function() { running--; resolve(); }, 20);
+      });
+    }));
+  }
+  await Promise.all(limiterTasks);
+  assert(maxRunning <= 3, 'max concurrent tasks <= 3');
+  assert(maxRunning === 3, 'max concurrent tasks reached 3 with 5 tasks');
 
   // --- Aggregation math invariant ---
   suite('Aggregation math');
-  agg.forEach(function(r) {
-    var net = r.additions - r.deletions;
+  abcAgg.forEach(function(r) {
     var changes = r.additions + r.deletions;
     assert(changes >= 0, 'changes >= 0 for ' + r.userKey);
     assert(changes === r.additions + r.deletions, 'changes = additions + deletions for ' + r.userKey);
@@ -171,92 +375,62 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   var repoList = app.StatsEngine.buildRepoList(configRepos, {});
   assertEqual(repoList.length, 2, 'duplicate repo URLs → deduplicated to 2');
 
-  // --- FCR-1: partialRepos tracking ---
-  suite('partialRepos tracking (FCR-1)');
-  assert(Array.isArray(app.StatsEngine.partialRepos), 'StatsEngine.partialRepos is an array');
-  // Verify partialRepos field exists and is independent of PR data
-  var savedPartial = app.StatsEngine.partialRepos;
-  app.StatsEngine.partialRepos = [{ platform: 'github', repo: 'org/big-repo' }];
-  assertEqual(app.StatsEngine.partialRepos.length, 1, 'partialRepos can be set independently');
-  assertEqual(app.StatsEngine.partialRepos[0].repo, 'org/big-repo', 'partialRepos holds repo info');
-  app.StatsEngine.partialRepos = savedPartial; // restore
-
-  // --- FCR-3: disabled users must not get PR attribution ---
+  // --- FCR-3: disabled users must not get attribution ---
   suite('Disabled user exclusion (FCR-3)');
   var fcr3Users = [
     { user_key: 'active-alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', enabled: true },
     { user_key: 'disabled-bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', enabled: false }
   ];
-  var fcr3PRs = [
-    { platform: 'github', repo: 'org/repo', author: 'alice-gh', number: 1, additions: 10, deletions: 5, changedFiles: 1, completeness: 'full' },
-    { platform: 'github', repo: 'org/repo', author: 'bob-gh', number: 2, additions: 20, deletions: 10, changedFiles: 2, completeness: 'full' }
+  var fcr3Acts = [
+    { platform: 'github', repository: 'org/repo', actor_login: 'alice-gh', activity_type: 'development' },
+    { platform: 'github', repository: 'org/repo', actor_login: 'bob-gh', activity_type: 'development' }
   ];
-  mapPRsToUsers(fcr3PRs, fcr3Users);
-  assert(fcr3PRs[0].matched === true, 'enabled user alice matched');
-  assert(fcr3PRs[1].matched === false, 'disabled user bob NOT matched');
-  // Edge case: disabled record listed before enabled, same login
-  var fcr3Users2 = [
-    { user_key: 'disabled-first', display_name: 'Alice D', github_login: 'alice-gh', gitcode_login: '', enabled: false },
-    { user_key: 'enabled-second', display_name: 'Alice E', github_login: 'alice-gh', gitcode_login: '', enabled: true }
-  ];
-  var fcr3PRs2 = [
-    { platform: 'github', repo: 'org/repo', author: 'alice-gh', number: 3, additions: 5, deletions: 1, changedFiles: 1, completeness: 'full' }
-  ];
-  mapPRsToUsers(fcr3PRs2, fcr3Users2);
-  assert(fcr3PRs2[0].matched === true && fcr3PRs2[0].userKey === 'enabled-second', 'disabled-before-enabled: matches enabled record');
+  mapActivitiesToUsers(fcr3Acts, fcr3Users);
+  assert(fcr3Acts[0].matched === true, 'enabled user alice matched');
+  assert(fcr3Acts[1].matched === false, 'disabled user bob NOT matched');
 
   // --- FCR-4: GitHub incomplete_results behavioral test ---
   suite('GitHub incomplete_results (FCR-4)');
-  var ghProvider = app.GitHubProvider;
-  var ghOrigFetch = ghProvider._fetch;
-  // Mock _fetch: search returns incomplete_results=true with 1 item, detail returns valid PR
-  var ghFetchCallCount = 0;
+  var ghOrigFetch2 = ghProvider._fetch;
   ghProvider._fetch = function(url) {
-    ghFetchCallCount++;
     if (url.indexOf('/search/issues') >= 0) {
       return Promise.resolve({
         total_count: 1, incomplete_results: true,
         items: [{ number: 42 }]
       });
     }
-    // PR detail
     return Promise.resolve({
-      number: 42, merged_at: '2026-01-15T10:00:00Z',
+      number: 42, merged_at: '2026-01-15T10:00:00Z', title: 'T',
       user: { login: 'testuser' }, base: { ref: 'main' },
       additions: 10, deletions: 5, changed_files: 2
     });
   };
   var ghResult = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
-  ghProvider._fetch = ghOrigFetch; // restore immediately
+  ghProvider._fetch = ghOrigFetch2;
   assert(ghResult.partial === true, 'incomplete_results=true → partial=true');
-  assert(ghResult.partialReason && ghResult.partialReason.indexOf('不完整') >= 0, 'partialReason mentions incompleteness, not "超过上限"');
+  assert(ghResult.partialReason && ghResult.partialReason.indexOf('不完整') >= 0, 'partialReason mentions incompleteness');
 
   // --- FCR-5: GitHub unparsable metrics behavioral test ---
   suite('GitHub unparsable metrics (FCR-5)');
   ghProvider._fetch = function(url) {
     if (url.indexOf('/search/issues') >= 0) {
-      return Promise.resolve({
-        total_count: 1, incomplete_results: false,
-        items: [{ number: 99 }]
-      });
+      return Promise.resolve({ total_count: 1, incomplete_results: false, items: [{ number: 99 }] });
     }
-    // PR detail with missing additions field
     return Promise.resolve({
-      number: 99, merged_at: '2026-01-15T10:00:00Z',
+      number: 99, merged_at: '2026-01-15T10:00:00Z', title: 'T',
       user: { login: 'testuser' }, base: { ref: 'main' },
       additions: undefined, deletions: 5, changed_files: 2
     });
   };
   var ghResult2 = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
-  ghProvider._fetch = ghOrigFetch; // restore
+  ghProvider._fetch = ghOrigFetch2;
   assert(ghResult2.prs.length === 1, 'one PR returned');
   assert(ghResult2.prs[0].completeness === 'partial', 'missing additions → completeness=partial');
   assertEqual(ghResult2.prs[0].additions, 0, 'unparsable additions defaults to 0');
 
   // --- FCR-5: GitCode changed_files unparsable → falls through to files endpoint ---
   suite('GitCode unparsable changed_files (FCR-5)');
-  var gcProvider = app.GitCodeProvider;
-  var gcOrigFetch = gcProvider._fetch;
+  var gcOrigFetch2 = gcProvider._fetch;
   var gcFilesEndpointCalled = false;
   gcProvider._fetch = function(url) {
     if (url.indexOf('/files') >= 0) {
@@ -266,13 +440,10 @@ document.getElementById('app-frame').addEventListener('load', async function() {
         { additions: 5, deletions: 2 }
       ]);
     }
-    // Detail endpoint: changed_files is not a number
-    return Promise.resolve({
-      additions: 100, deletions: 50, changed_files: 'N/A'
-    });
+    return Promise.resolve({ additions: 100, deletions: 50, changed_files: 'N/A' });
   };
   var gcResult = await gcProvider._getPRStats('tok', 'org', 'repo', 1, new AbortController().signal);
-  gcProvider._fetch = gcOrigFetch; // restore
+  gcProvider._fetch = gcOrigFetch2;
   assert(gcFilesEndpointCalled === true, 'unparsable changed_files → falls through to /files endpoint');
   assertEqual(gcResult.additions, 15, 'files endpoint additions = 10+5');
   assertEqual(gcResult.deletions, 5, 'files endpoint deletions = 3+2');
@@ -281,14 +452,125 @@ document.getElementById('app-frame').addEventListener('load', async function() {
 
   // --- Production code identity check ---
   suite('Production code identity (FCR-2)');
-  assert(parseRepoUrl === app.parseRepoUrl, 'parseRepoUrl is from production, not a copy');
-  assert(CsvHelper === app.CsvHelper, 'CsvHelper is from production, not a copy');
-  assert(typeof app.StatsEngine.completenessLabel === 'function', 'StatsEngine.completenessLabel exists in production');
-  assert(typeof app.StatsEngine.completenessClass === 'function', 'StatsEngine.completenessClass exists in production');
-  assert(typeof app.GitHubProvider === 'object', 'GitHubProvider exists in production');
-  assert(typeof app.GitCodeProvider === 'object', 'GitCodeProvider exists in production');
-  assert(typeof app.collectFilters === 'function', 'collectFilters exists in production');
-  assert(typeof app.selectSummaryRow === 'function', 'selectSummaryRow exists in production');
+  assert(parseRepoUrl === app.parseRepoUrl, 'parseRepoUrl is from production');
+  assert(CsvHelper === app.CsvHelper, 'CsvHelper is from production');
+  assert(typeof app.StatsEngine.mapActivitiesToUsers === 'function', 'StatsEngine.mapActivitiesToUsers exists');
+  assert(typeof app.StatsEngine.aggregate === 'function', 'StatsEngine.aggregate exists');
+  assert(typeof app.StatsEngine.completenessLabel === 'function', 'StatsEngine.completenessLabel exists');
+  assert(typeof app.GitHubProvider.fetchCollaboration === 'function', 'GitHubProvider.fetchCollaboration exists');
+  assert(typeof app.GitCodeProvider.fetchCollaboration === 'function', 'GitCodeProvider.fetchCollaboration exists');
+
+  // ==================== FC-8: UI / export interaction tests ====================
+
+  // --- exportCSV summary respects user type filter (FC-1 / FC-7) ---
+  suite('exportCSV summary filter');
+  var origDownload = app.CsvHelper.download;
+  var captured = [];
+  app.CsvHelper.download = function(filename, content) { captured.push({ filename: filename, content: content }); };
+
+  app.document.getElementById('stat-user-type').value = 'matched';
+  app.StatsEngine.summaryRows = [
+    { platform: 'github', userKey: 'alice', displayName: 'Alice', repo: 'org/repo', matched: true, prCount: 1, commentCount: 2, approveCount: 0, additions: 10, deletions: 5, changedFiles: 2, completeness: 'full' },
+    { platform: 'github', userKey: 'bob', displayName: 'Bob', repo: 'org/repo', matched: true, prCount: 0, commentCount: 1, approveCount: 1, additions: 0, deletions: 0, changedFiles: 0, completeness: 'full' },
+    { platform: 'github', userKey: '⚠ unknown', displayName: 'unknown', repo: 'org/repo', matched: false, prCount: 1, commentCount: 0, approveCount: 0, additions: 3, deletions: 1, changedFiles: 1, completeness: 'full' }
+  ];
+  app.StatsEngine.partialRepos = [{ platform: 'github', repo: 'org/partial', reason: 'rate limited' }];
+  app.StatsEngine.failedRepos = [{ platform: 'github', repo: 'org/failed', error: 'timeout' }];
+  app.exportCSV('summary');
+  app.CsvHelper.download = origDownload;
+
+  assert(captured.length === 1, 'summary CSV downloaded once');
+  var summaryCsv = captured[0].content;
+  assert(summaryCsv.indexOf('alice') >= 0, 'matched user alice exported');
+  assert(summaryCsv.indexOf('bob') >= 0, 'matched user bob exported');
+  assert(summaryCsv.indexOf('⚠ unknown') < 0, 'unmatched user NOT exported when matched selected');
+  assert(summaryCsv.indexOf('org/partial') >= 0, 'partial repo appended to summary CSV');
+  assert(summaryCsv.indexOf('org/failed') >= 0, 'failed repo appended to summary CSV');
+
+  // --- exportCSV detail respects user type filter (FC-1) ---
+  suite('exportCSV detail filter');
+  captured = [];
+  app.CsvHelper.download = function(filename, content) { captured.push({ filename: filename, content: content }); };
+
+  app.document.getElementById('stat-user-type').value = 'unmatched';
+  app.StatsEngine.filteredActivities = [
+    { platform: 'github', repository: 'org/repo', pr_number: 1, pr_title: 'Dev', activity_type: 'development', source_type: 'pr', source_id: '1', event_at: '2026-01-10T10:00:00Z', merged_at: '2026-01-10T10:00:00Z', actor_login: 'alice-gh', user_key: 'alice', display_name: 'Alice', matched: true, additions: 10, deletions: 0, changed_files: 1, body_summary: '', activity_url: 'http://example.com/1', completeness: 'full' },
+    { platform: 'github', repository: 'org/repo', pr_number: 2, pr_title: 'Comment', activity_type: 'comment', source_type: 'issue_comment', source_id: '2', event_at: '2026-01-10T11:00:00Z', merged_at: '2026-01-10T11:00:00Z', actor_login: 'unknown', user_key: '', display_name: 'unknown', matched: false, additions: 0, deletions: 0, changed_files: 0, body_summary: 'hi', activity_url: 'http://example.com/2', completeness: 'full' }
+  ];
+  app.exportCSV('detail');
+  app.CsvHelper.download = origDownload;
+
+  assert(captured.length === 1, 'detail CSV downloaded once');
+  var detailCsv = captured[0].content;
+  assert(detailCsv.indexOf('unknown') >= 0, 'unmatched activity exported in detail CSV');
+  assert(detailCsv.indexOf('alice-gh') < 0, 'matched activity NOT exported when unmatched selected');
+
+  // --- renderResults renders rows and hides grand total in unmatched view (FC-7 / FC-9) ---
+  suite('renderResults DOM');
+  app.document.getElementById('stat-user-type').value = 'all';
+  app.StatsEngine.currentActivities = [
+    { platform: 'github', repository: 'org/repo', actor_login: 'alice-gh', user_key: 'alice', display_name: 'Alice', matched: true, activity_type: 'development', additions: 10, deletions: 5, changed_files: 2, completeness: 'full', pr_number: 1, pr_title: 'T1', merged_at: '2026-01-10T10:00:00Z', source_type: 'pr', source_id: '1', event_at: '2026-01-10T10:00:00Z', body_summary: '', activity_url: '' },
+    { platform: 'github', repository: 'org/repo', actor_login: 'bob-gh', user_key: 'bob', display_name: 'Bob', matched: true, activity_type: 'comment', completeness: 'full', pr_number: 2, pr_title: 'T2', merged_at: '2026-01-10T10:00:00Z', source_type: 'issue_comment', source_id: '2', event_at: '2026-01-10T10:00:00Z', body_summary: 'nice', activity_url: '' }
+  ];
+  app.StatsEngine.failedRepos = [];
+  app.StatsEngine.partialRepos = [];
+  app.renderResults({});
+
+  var summaryBody = app.document.getElementById('summary-tbody');
+  assert(summaryBody.querySelectorAll('.summary-row').length === 2, 'two summary rows rendered');
+  assert(summaryBody.querySelector('.grand-total'), 'grand total row shown in all view');
+
+  // Switch to unmatched-only view
+  app.document.getElementById('stat-user-type').value = 'unmatched';
+  app.StatsEngine.currentActivities = [
+    { platform: 'github', repository: 'org/repo', actor_login: 'unknown', user_key: '', display_name: 'unknown', matched: false, activity_type: 'development', additions: 3, deletions: 1, changed_files: 1, completeness: 'full', pr_number: 3, pr_title: 'T3', merged_at: '2026-01-10T10:00:00Z', source_type: 'pr', source_id: '3', event_at: '2026-01-10T10:00:00Z', body_summary: '', activity_url: '' }
+  ];
+  app.renderResults({});
+  assert(app.document.getElementById('summary-tbody').querySelectorAll('.summary-row').length === 1, 'one unmatched row rendered');
+  assert(!app.document.getElementById('summary-tbody').querySelector('.grand-total'), 'grand total hidden in unmatched view');
+
+  // --- selectSummaryRow + switchDetailTab: counts, aria-selected, tab content (FC-9) ---
+  suite('selectSummaryRow and switchDetailTab');
+  app.document.getElementById('stat-user-type').value = 'all';
+  app.StatsEngine.currentActivities = [
+    { platform: 'github', repository: 'org/repo', actor_login: 'alice-gh', user_key: 'alice', display_name: 'Alice', matched: true, activity_type: 'development', additions: 10, deletions: 5, changed_files: 2, completeness: 'full', pr_number: 1, pr_title: 'Dev PR', merged_at: '2026-01-10T10:00:00Z', source_type: 'pr', source_id: '1', event_at: '2026-01-10T10:00:00Z', body_summary: '', activity_url: 'http://example.com/1' },
+    { platform: 'github', repository: 'org/repo', actor_login: 'alice-gh', user_key: 'alice', display_name: 'Alice', matched: true, activity_type: 'comment', completeness: 'full', pr_number: 2, pr_title: 'Comment PR', merged_at: '2026-01-10T10:00:00Z', source_type: 'issue_comment', source_id: '2', event_at: '2026-01-10T11:00:00Z', body_summary: 'looks good', activity_url: 'http://example.com/2' },
+    { platform: 'github', repository: 'org/repo', actor_login: 'alice-gh', user_key: 'alice', display_name: 'Alice', matched: true, activity_type: 'approval', completeness: 'full', pr_number: 3, pr_title: 'Approve PR', merged_at: '2026-01-10T10:00:00Z', source_type: 'approval', source_id: 'approval-3-alice-gh', event_at: '2026-01-10T12:00:00Z', body_summary: '', activity_url: 'http://example.com/3' }
+  ];
+  app.StatsEngine.failedRepos = [];
+  app.StatsEngine.partialRepos = [];
+  app.renderResults({});
+
+  var rows = app.document.querySelectorAll('.summary-row');
+  assert(rows.length === 1, 'one summary row for alice');
+  assert(rows[0].getAttribute('tabindex') === '0', 'summary row is keyboard focusable');
+  app.selectSummaryRow(rows[0]);
+
+  var detailSection = app.document.getElementById('detail-section');
+  assert(!detailSection.classList.contains('hidden'), 'detail section visible after selectSummaryRow');
+
+  var tabs = app.document.querySelectorAll('.detail-tab');
+  var devTab = Array.from(tabs).find(function(t) { return t.dataset.tab === 'development'; });
+  var commentTab = Array.from(tabs).find(function(t) { return t.dataset.tab === 'comments'; });
+  var approveTab = Array.from(tabs).find(function(t) { return t.dataset.tab === 'approvals'; });
+  assert(devTab && devTab.textContent.indexOf('(1)') >= 0, 'development tab shows count 1');
+  assert(commentTab && commentTab.textContent.indexOf('(1)') >= 0, 'comments tab shows count 1');
+  assert(approveTab && approveTab.textContent.indexOf('(1)') >= 0, 'approvals tab shows count 1');
+  assert(devTab.getAttribute('aria-selected') === 'true', 'development tab aria-selected true');
+  assert(commentTab.getAttribute('aria-selected') === 'false', 'comments tab aria-selected false');
+
+  app.switchDetailTab('comments');
+  assert(commentTab.getAttribute('aria-selected') === 'true', 'comments tab aria-selected after switch');
+  assert(devTab.getAttribute('aria-selected') === 'false', 'development tab aria-selected false after switch');
+  assert(app.document.getElementById('detail-tbody').textContent.indexOf('looks good') >= 0, 'comments tab renders comment content');
+
+  app.switchDetailTab('approvals');
+  assert(approveTab.getAttribute('aria-selected') === 'true', 'approvals tab selected');
+  assert(app.document.getElementById('detail-thead').textContent.indexOf('当前状态') >= 0, 'approvals tab renders approval columns');
+
+  // Collapse detail by clicking the same row again
+  app.selectSummaryRow(rows[0]);
+  assert(detailSection.classList.contains('hidden'), 'detail section hidden after second click');
 
   // ==================== Render Results ====================
   renderTestResults();
