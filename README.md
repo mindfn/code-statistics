@@ -1,6 +1,8 @@
 # PR 代码变更统计
 
-统计用户在 GitHub / GitCode 上指定时间范围内的已合并 PR 代码变更量，支持按 CSV 导出。
+统计用户在 GitHub / GitCode 上指定时间范围内已合并 PR 的代码变更量、Comments 和 Approve，支持按 CSV 导出。
+
+维护和二次开发请从 [MAINTAINING.md](MAINTAINING.md) 开始；其中记录了架构、数据契约、扩展落点、测试门禁和发布流程。
 
 ## 使用方式
 
@@ -26,11 +28,11 @@ Token 仅保存在浏览器 `localStorage`，不会进入导出的 CSV、日志�
 
 ## 数据存储与安全
 
-**所有配置和用户数据均保存在浏览器的 `localStorage` 中**，不会上传到任何服务器。
+**所有配置和用户数据均保存在浏览器的 `localStorage` 中**，不会上传到本工具自建的服务器。查询时，Token 会通过认证请求头直接发送给 GitHub / GitCode API。
 
-- **无后端、无数据外泄风险** — 本工具是纯前端静态页面，Token、用户信息、仓库配置等数据只存在于你的浏览器本地存储中，不存在服务端泄露的可能。
-- **清除浏览器数据会同时清除已导入的配置** — 如果你清除了浏览器的站点数据（localStorage），之前导入或手动添加的用户和仓库配置将一同被清除。建议定期使用"下载模板"功能导出用户 CSV 作为备份。
-- **多设备不同步** — 由于数据存储在本地浏览器，不同设备或不同浏览器之间的数据不会自动同步。可通过 CSV 导入/导出在设备间迁移用户数据。
+- **无自建后端上传路径** — GitHub Pages 只托管静态文件，不接收 Token、用户信息、仓库配置或统计结果。仍应只在可信设备和可信浏览器环境中使用。
+- **清除浏览器数据会同时清除已导入的配置** — 如果你清除了浏览器的站点数据（localStorage），之前导入或手动添加的用户和仓库配置将一同被清除。当前版本没有一键导出用户配置，建议保留原始导入 CSV；“下载模板”只包含表头和示例行，不是备份。
+- **多设备不同步** — 由于数据存储在本地浏览器，不同设备或不同浏览器之间的数据不会自动同步。可在另一设备重新导入保留的用户 CSV；Token 和仓库列表需要重新配置。
 
 ## 网络与代理
 
@@ -94,11 +96,18 @@ user_key,display_name,email,github_login,gitcode_login
 | 无应用内代理 | 浏览器 `fetch` 不支持为单次请求指定代理，只能沿用系统/浏览器代理 |
 | IndexedDB | 在 `file://` 协议下不可用，因此使用 localStorage（有 ~5MB 容量限制，通常足够） |
 | Token 安全 | 仅适合可信本机使用。建议用完后及时清除 Token |
+| 配置备份 | 当前没有一键导出用户和仓库配置；请保留原始用户 CSV，并在迁移设备前手工记录仓库列表 |
 | 统计结果不持久化 | 查询结果仅保存在页面内存中，刷新后需重新查询。CSV 是统计结果的持久交付物 |
 
 ## 技术说明
 
 - 单个 `index.html`，所有 HTML / CSS / JavaScript 内联，无 CDN、无第三方依赖
 - `localStorage` 持久化配置和用户数据（Key: `code-statistics.config.v1` / `code-statistics.users.v1`）
-- GitHub API: Search Issues + Pull Request Detail + Issue Comments + Review Comments + Reviews（认证搜索限额 30 次/分钟）
-- GitCode API v5: Pull Request List + Detail/Files + Comments（限额 400 次/分钟）
+- GitHub API: Search Issues + Pull Request Detail + Issue Comments + Review Comments + Reviews；代码包含分页、节流、限流等待和部分结果标记
+- GitCode API v5: Pull Request List + Detail/Files + Comments；代码包含分页、有限并发、限流报错和字段完整性检查
+
+## 维护者入口
+
+- [维护与迭代指南](MAINTAINING.md)：模块地图、Provider 契约、统计不变量、常见扩展方法、安全边界和发布流程。
+- `test.html`：直接加载 `index.html` 生产代码的浏览器测试；本地通过 `python3 -m http.server 8901 --bind 127.0.0.1` 运行。
+- `.github/workflows/deploy.yml`：`main` 更新后的 GitHub Pages 自动部署配置。
