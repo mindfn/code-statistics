@@ -313,7 +313,7 @@ python3 -m http.server 8901 --bind 127.0.0.1
 http://127.0.0.1:8901/test.html
 ```
 
-F003 开发分支基线为 `212 passed, 0 failed`；新增行为时测试总数应增加，不应通过删除断言维持全绿。
+F003 fresh-context 处置后的开发分支基线为 `222 passed, 0 failed`；新增行为时测试总数应增加，不应通过删除断言维持全绿。
 
 静态检查：
 
