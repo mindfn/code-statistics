@@ -393,6 +393,43 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(maxActiveRequests.gitcode <= 16, 'GitCode request concurrency never exceeds 16 (got ' + maxActiveRequests.gitcode + ')');
   assert(maxActiveRequests.gitcode > 3, 'GitCode request concurrency can exceed old PR-task limit 3');
 
+  suite('F003 nested collaboration fan-out request budget');
+  var fanoutActive = 0;
+  var fanoutPeak = 0;
+  app.fetch = function() {
+    fanoutActive++;
+    fanoutPeak = Math.max(fanoutPeak, fanoutActive);
+    return new Promise(function(resolve) {
+      setTimeout(function() {
+        fanoutActive--;
+        resolve({
+          ok: true,
+          status: 200,
+          headers: { get: function() { return null; } },
+          json: function() { return Promise.resolve([]); }
+        });
+      }, 15);
+    });
+  };
+  var fanoutTasks = [];
+  for (var fanoutIndex = 0; fanoutIndex < 12; fanoutIndex++) {
+    fanoutTasks.push(app.GitHubProvider.fetchCollaboration(
+      'tok', 'org', 'repo',
+      {
+        number: fanoutIndex + 1,
+        title: 'Fan-out PR ' + fanoutIndex,
+        mergedAt: '2026-07-20T00:00:00Z',
+        url: 'https://github.com/org/repo/pull/' + (fanoutIndex + 1)
+      },
+      new AbortController().signal,
+      function(){}
+    ));
+  }
+  await Promise.all(fanoutTasks);
+  app.fetch = originalWindowFetch;
+  assert(fanoutPeak <= 8, 'nested GitHub collaboration fan-out never exceeds request budget 8 (got ' + fanoutPeak + ')');
+  assert(fanoutPeak > 3, 'nested GitHub collaboration fan-out can use more than 3 requests');
+
   // --- F003: merged PR cache contract ---
   suite('F003 PR cache key and lifecycle');
   assert(typeof app.prCacheKey === 'function', 'prCacheKey is exposed');
@@ -414,7 +451,7 @@ document.getElementById('app-frame').addEventListener('load', async function() {
       prNumber: 42,
       core: {
         platform: 'github', repo: 'Org/Repo', number: 42, author: 'alice',
-        mergedAt: '2026-07-25T00:00:00Z', additions: 10, deletions: 2,
+        mergedAt: '2026-07-25T00:00:00Z', baseBranch: 'main', additions: 10, deletions: 2,
         changedFiles: 1, completeness: 'full', url: 'https://example.test/42'
       },
       activities: [{
@@ -463,6 +500,14 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     });
     await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 46), mismatchedEntry);
     assert((await memoryCache.get('github', 'Org/Repo', 46)) === null, 'key/core identity mismatch is a miss');
+
+    var missingBranchEntry = Object.assign({}, fullEntry, {
+      prNumber: 47,
+      core: Object.assign({}, fullEntry.core, { number: 47, baseBranch: '' }),
+      activities: []
+    });
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 47), missingBranchEntry);
+    assert((await memoryCache.get('github', 'Org/Repo', 47)) === null, 'full cache entry without base branch is a miss');
   }
 
   suite('F003 IndexedDB persistence');
@@ -478,7 +523,7 @@ document.getElementById('app-frame').addEventListener('load', async function() {
       prNumber: 7,
       core: {
         platform: 'gitcode', repo: 'org/repo', number: 7, author: 'alice',
-        mergedAt: '2026-07-25T00:00:00Z', additions: 1, deletions: 0,
+        mergedAt: '2026-07-25T00:00:00Z', baseBranch: 'main', additions: 1, deletions: 0,
         changedFiles: 1, completeness: 'full', url: 'https://example.test/7'
       },
       activities: [],
@@ -539,6 +584,40 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     ghCachedResult.prs[0] && Array.isArray(ghCachedResult.prs[0]._cachedActivities) &&
       ghCachedResult.prs[0]._cachedActivities.length === 1,
     'GitHub cached activities travel with the core'
+  );
+  app.GitHubProvider._fetch = ghCacheOriginalFetch;
+
+  suite('F003 GitHub network PR count precision');
+  app.GitHubProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({
+        total_count: 2,
+        incomplete_results: false,
+        items: [{ number: 50 }, { number: 51 }]
+      });
+    }
+    var number = url.indexOf('/pulls/50') >= 0 ? 50 : 51;
+    return Promise.resolve({
+      number: number,
+      title: 'Network PR ' + number,
+      user: { login: 'alice' },
+      merged_at: '2026-07-20T00:00:00Z',
+      base: { ref: number === 50 ? 'main' : 'release' },
+      additions: 10,
+      deletions: 2,
+      changed_files: 1
+    });
+  };
+  var ghFilteredResult = await app.GitHubProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, { get: function() { return Promise.resolve(null); } }
+  );
+  assertEqual(ghFilteredResult.prs.length, 1, 'GitHub branch filtering keeps one selected PR');
+  assertEqual(ghFilteredResult.networkPRs, 1, 'GitHub network count includes only selected PRs');
+  assertEqual(
+    ghFilteredResult.cacheHits + ghFilteredResult.networkPRs,
+    ghFilteredResult.prs.length,
+    'GitHub cache/network counts add up to selected PR total'
   );
   app.GitHubProvider._fetch = ghCacheOriginalFetch;
 
@@ -619,6 +698,12 @@ document.getElementById('app-frame').addEventListener('load', async function() {
       additions: 2, deletions: 1, changedFiles: 1, completeness: 'full',
       url: 'https://github.com/org/repo/pull/8'
     };
+    var partialCacheEntry = app.createPRCacheEntry(
+      Object.assign({}, networkPr, { completeness: 'partial' }),
+      []
+    );
+    assertEqual(partialCacheEntry.completeness, 'partial', 'cache entry preserves PR completeness');
+
     var networkCollabResult = await app.fetchCollaborationForPR({
       provider: collabProvider, token: 'tok',
       r: { platform: 'github', owner: 'org', repo: 'repo' },
@@ -627,6 +712,19 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     assertEqual(collabProviderCalls, 1, 'cache miss fetches collaboration once');
     assertEqual(collabCacheWrites, 1, 'full collaboration writes one cache entry');
     assert(networkCollabResult.cacheHit === false, 'network collaboration reports miss');
+
+    var abortedAfterFetch = new AbortController();
+    abortedAfterFetch.abort();
+    await app.fetchCollaborationForPR({
+      provider: collabProvider, token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: Object.assign({}, networkPr, { number: 10 })
+    }, abortedAfterFetch.signal, collabCache, function(){});
+    assertEqual(
+      collabCacheWrites,
+      2,
+      'completed full PR remains cacheable when query UI is cancelled'
+    );
 
     collabProvider.fetchCollaboration = function() {
       collabProviderCalls++;
@@ -638,7 +736,7 @@ document.getElementById('app-frame').addEventListener('load', async function() {
       pr: Object.assign({}, networkPr, { number: 9 })
     }, new AbortController().signal, collabCache, function(){});
     assert(partialCollabResult.partial === true, 'partial collaboration remains partial');
-    assertEqual(collabCacheWrites, 1, 'partial collaboration is not cached');
+    assertEqual(collabCacheWrites, 2, 'partial collaboration is not cached');
   }
 
   suite('F003 PR core partial reason propagation');
@@ -790,6 +888,46 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     app.Storage.loadUsers = remapOriginalLoadUsers;
   }
 
+  suite('F003 repository discovery runs in parallel');
+  var parallelOriginalLoadConfig = app.Storage.loadConfig;
+  var parallelOriginalLoadUsers = app.Storage.loadUsers;
+  var parallelOriginalGetDefaultBranch = app.GitHubProvider.getDefaultBranch;
+  var parallelOriginalFetchMergedPRs = app.GitHubProvider.fetchMergedPRs;
+  var parallelResolvers = [];
+  var parallelStarts = 0;
+  app.Storage.loadConfig = function() {
+    return {
+      githubToken: 'tok',
+      gitcodeToken: '',
+      repositories: [
+        'https://github.com/org/repo-a',
+        'https://github.com/org/repo-b'
+      ]
+    };
+  };
+  app.Storage.loadUsers = function() { return []; };
+  app.GitHubProvider.getDefaultBranch = function() {
+    parallelStarts++;
+    return new Promise(function(resolve) { parallelResolvers.push(resolve); });
+  };
+  app.GitHubProvider.fetchMergedPRs = function() {
+    return Promise.resolve({ prs: [], partial: false, partialReason: '', cacheHits: 0, networkPRs: 0 });
+  };
+  app.document.getElementById('stat-start').value = '2026-07-01';
+  app.document.getElementById('stat-end').value = '2026-07-31';
+  app.document.getElementById('stat-platform').value = '';
+  app.document.getElementById('stat-user').value = '';
+  app.document.getElementById('stat-repo').value = '';
+  var parallelQuery = app.runQuery();
+  await new Promise(function(resolve) { setTimeout(resolve, 0); });
+  assertEqual(parallelStarts, 2, 'both repository discovery tasks start before either resolves');
+  parallelResolvers.forEach(function(resolve) { resolve('main'); });
+  await parallelQuery;
+  app.Storage.loadConfig = parallelOriginalLoadConfig;
+  app.Storage.loadUsers = parallelOriginalLoadUsers;
+  app.GitHubProvider.getDefaultBranch = parallelOriginalGetDefaultBranch;
+  app.GitHubProvider.fetchMergedPRs = parallelOriginalFetchMergedPRs;
+
   suite('F003 user mutations trigger one remap path');
   if (typeof app.remapCurrentResultsAfterUsersChanged === 'function') {
     var wiringOriginalLoadUsers = app.Storage.loadUsers;
@@ -844,6 +982,40 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     app.closeImportDialog = wiringOriginalCloseImport;
     app.confirm = wiringOriginalConfirm;
   }
+
+  suite('F003 user mutation refreshes filters once');
+  var refreshOriginalLoadUsers = app.Storage.loadUsers;
+  var refreshOriginalSaveUsers = app.Storage.saveUsers;
+  var refreshOriginalFilters = app.refreshFilterDropdowns;
+  var refreshOriginalRenderResults = app.renderResults;
+  var refreshOriginalCloseUser = app.closeUserDialog;
+  var refreshUsers = [{
+    user_key: 'alice', display_name: 'Alice', email: '',
+    github_login: 'alice-gh', gitcode_login: '', enabled: true
+  }];
+  var refreshCalls = 0;
+  app.Storage.loadUsers = function() { return refreshUsers; };
+  app.Storage.saveUsers = function(users) { refreshUsers = users; };
+  app.refreshFilterDropdowns = function() { refreshCalls++; };
+  app.renderResults = function() {};
+  app.closeUserDialog = function() {};
+  app.StatsEngine.currentActivities = [{
+    platform: 'github', repository: 'org/repo', actor_login: 'alice-gh',
+    activity_type: 'development', completeness: 'full', pr_number: 1
+  }];
+  app.document.getElementById('edit-index').value = '0';
+  app.document.getElementById('edit-user-key').value = 'alice';
+  app.document.getElementById('edit-display-name').value = 'Alice Once';
+  app.document.getElementById('edit-email').value = '';
+  app.document.getElementById('edit-github-login').value = 'alice-gh';
+  app.document.getElementById('edit-gitcode-login').value = '';
+  app.saveUser({ preventDefault: function() {} });
+  assertEqual(refreshCalls, 1, 'save/edit rebuilds filter dropdowns once');
+  app.Storage.loadUsers = refreshOriginalLoadUsers;
+  app.Storage.saveUsers = refreshOriginalSaveUsers;
+  app.refreshFilterDropdowns = refreshOriginalFilters;
+  app.renderResults = refreshOriginalRenderResults;
+  app.closeUserDialog = refreshOriginalCloseUser;
 
   // --- Aggregation math invariant ---
   suite('Aggregation math');

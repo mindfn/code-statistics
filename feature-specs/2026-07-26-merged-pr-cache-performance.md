@@ -102,7 +102,7 @@ function prCacheKey(platform, repository, prNumber) {
 | pending | network start | running | 不增加 completed |
 | running | full success | done | completed+1, network+1 |
 | running | partial/error | partial | completed+1, network+1, 保存原因 |
-| pending/running | abort | cancelled | 禁止后续写 success |
+| pending/running | abort | cancelled | 禁止 UI 写 success；已经完成并通过 full 门禁的稳定 PR 可写本地缓存 |
 | all terminal | finalize | query terminal | 标题显示完成/取消/部分/失败 |
 
 ### 4. User Attribution Projection
@@ -131,7 +131,7 @@ function prCacheKey(platform, repository, prNumber) {
 | schema 升级 | 旧条目 miss 并替换 | stale schema test |
 | partial 网络结果 | 当前显示 partial；下次再次抓取 | partial rejection test |
 | 用户在统计结果存在时被禁用 | 活动变未匹配且 0 fetch | remap DOM test |
-| 取消时队列仍有任务 | 不显示完成，不写晚到缓存 | abort progress/cache test |
+| 取消时队列仍有任务 | 不显示完成；只有已经完成并通过 full 门禁的稳定 PR 可写缓存 | abort progress/cache test |
 
 ## 既有正确行为保护点
 

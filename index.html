@@ -956,6 +956,8 @@ var CacheStore = {
     if (entry.core.platform !== entry.platform) return false;
     if (String(entry.core.repo || '').toLowerCase() !== String(entry.repository).toLowerCase()) return false;
     if (String(entry.core.number) !== String(entry.prNumber)) return false;
+    if (!entry.core.baseBranch) return false;
+    if (!entry.core.mergedAt || isNaN(new Date(entry.core.mergedAt).getTime())) return false;
     return entry.activities.every(function(activity) {
       return activity && activity.completeness === 'full' &&
         activity.platform === entry.platform &&
@@ -1183,7 +1185,6 @@ var GitHubProvider = {
           return;
         }
 
-        networkPRs++;
         try {
           var detail = await self._fetch(
             self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + item.number,
@@ -1199,6 +1200,7 @@ var GitHubProvider = {
           var ghDel = parseInt(detail.deletions, 10);
           var ghFiles = parseInt(detail.changed_files, 10);
           var ghUnparsable = isNaN(ghAdd) || isNaN(ghDel) || isNaN(ghFiles);
+          networkPRs++;
           prs.push({
             platform: 'github',
             repo: owner + '/' + repo,
@@ -1215,6 +1217,7 @@ var GitHubProvider = {
           });
         } catch (err) {
           // Record failed PR
+          networkPRs++;
           prs.push({
             platform: 'github', repo: owner + '/' + repo, number: item.number,
             title: '',
@@ -1883,8 +1886,8 @@ function createPRCacheEntry(pr, activities) {
       url: pr.url || ''
     },
     activities: cloneCacheValue(activities || []),
-    completeness: 'full',
-    partialReason: ''
+    completeness: pr.completeness,
+    partialReason: pr.partialReason || ''
   };
 }
 
@@ -1912,7 +1915,7 @@ async function fetchCollaborationForPR(task, signal, cacheStore, onProgress) {
   var activities = collab.activities || [];
   var isFull = !collab.partial && pr.completeness === 'full' &&
     activities.every(function(activity) { return activity.completeness === 'full'; });
-  if (isFull && cacheStore && !(signal && signal.aborted)) {
+  if (isFull && cacheStore) {
     await cacheStore.put(createPRCacheEntry(pr, activities));
   }
   return collab;
@@ -2568,7 +2571,6 @@ function toggleTokenVisibility(inputId) {
 function remapCurrentResultsAfterUsersChanged(users) {
   if (!StatsEngine.currentActivities || StatsEngine.currentActivities.length === 0) return false;
   StatsEngine.mapActivitiesToUsers(StatsEngine.currentActivities, users || Storage.loadUsers());
-  refreshFilterDropdowns();
   renderResults(collectFilters());
   return true;
 }
