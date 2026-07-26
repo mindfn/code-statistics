@@ -8,7 +8,7 @@ created: 2026-07-26
 
 # F003: 已合入 PR 缓存与查询加速
 
-> **Status**: spec | **Owner**: sol | **Priority**: P1
+> **Status**: in-progress | **Owner**: sol | **Priority**: P1
 
 ## Why
 
@@ -107,11 +107,11 @@ Storage.users
 
 | ID | 需求点（operator experience/转述） | AC 编号 | 验证方式 | 状态 |
 |----|---------------------------|---------|----------|------|
-| R1 | 已合入 PR 无需为少数 merge 后评论变化增加兼容 | AC-A1, AC-A2 | cache hit/miss/schema/partial tests | [ ] |
-| R2 | 按 PR 持久缓存，减少重复查询请求 | AC-A1, AC-A3 | IndexedDB reopen + request count tests | [ ] |
-| R3 | 采用 8/16 并行但不能放大成 24/48 个请求 | AC-B1 | instrumented max concurrency tests | [ ] |
-| R4 | 查询完成后进度必须真实结束并展示原因 | AC-B2, AC-B3 | progress state DOM tests | [ ] |
-| R5 | 用户资料变化后无需重拉远端 | AC-C1 | fetch=0 + remap DOM tests | [ ] |
+| R1 | 已合入 PR 无需为少数 merge 后评论变化增加兼容 | AC-A1, AC-A2 | cache hit/miss/schema/partial tests | [x] |
+| R2 | 按 PR 持久缓存，减少重复查询请求 | AC-A1, AC-A3 | IndexedDB reopen + request count tests | [x] |
+| R3 | 采用 8/16 并行但不能放大成 24/48 个请求 | AC-B1 | instrumented max concurrency tests | [x] |
+| R4 | 查询完成后进度必须真实结束并展示原因 | AC-B2, AC-B3 | progress state DOM tests | [x] |
+| R5 | 用户资料变化后无需重拉远端 | AC-C1 | fetch=0 + remap DOM tests | [x] |
 
 ### 覆盖检查
 
@@ -123,21 +123,25 @@ Storage.users
 
 ### Phase A: 稳定 PR 缓存
 
-- [ ] AC-A1: 完整、同 schema 的 PR 条目在重复查询中命中，且该 PR 的详情、代码量、Comments、Reviews/Approve 请求数为 0；仓库级 PR 发现仍执行。
-- [ ] AC-A2: schema 不匹配、损坏、partial 或 failed 条目不得命中；重抓后的完整条目原子替换旧值，且用户映射字段不写入缓存。
-- [ ] AC-A3: `http(s)` 下 IndexedDB 关闭并重新打开后仍能读取完整条目；`file://` 明确使用内存缓存且 README/界面不声称跨重开持久化。
+- [x] AC-A1: 完整、同 schema 的 PR 条目在重复查询中命中，且该 PR 的详情、代码量、Comments、Reviews/Approve 请求数为 0；仓库级 PR 发现仍执行。
+- [x] AC-A2: schema 不匹配、损坏、partial 或 failed 条目不得命中；重抓后的完整条目原子替换旧值，且用户映射字段不写入缓存。
+- [x] AC-A3: `http(s)` 下 IndexedDB 关闭并重新打开后仍能读取完整条目；`file://` 明确使用内存缓存且 README/界面不声称跨重开持久化。
 
 ### Phase B: 并发与进度
 
-- [ ] AC-B1: 并行夹具中 GitHub 同时进行的网络请求不超过 8，GitCode 不超过 16；每个平台都能实际达到大于 3 的并行度，内部嵌套请求不会突破预算。
-- [ ] AC-B2: PR 总完成数仅在 cache hit 或网络任务 settle 后递增；查询结束、取消、部分与失败都有唯一终态，结果渲染后不再显示“正在获取”。
-- [ ] AC-B3: 仓库进度终态显示 PR 总数、缓存命中数和网络获取数；partial/failed 原因在仓库行可见并保留到导出诊断。
+- [x] AC-B1: 并行夹具中 GitHub 同时进行的网络请求不超过 8，GitCode 不超过 16；每个平台都能实际达到大于 3 的并行度，内部嵌套请求不会突破预算。
+- [x] AC-B2: PR 总完成数仅在 cache hit 或网络任务 settle 后递增；查询结束、取消、部分与失败都有唯一终态，结果渲染后不再显示“正在获取”。
+- [x] AC-B3: 仓库进度终态显示 PR 总数、缓存命中数和网络获取数；partial/failed 原因在仓库行可见并保留到导出诊断。
 
 ### Phase C: 本地重映射与回归
 
-- [ ] AC-C1: 用户新增、编辑、启禁用、删除和 CSV 导入都会对当前活动重新映射并重渲染，期间 Provider/fetch 调用数为 0；无当前活动时安全 no-op。
-- [ ] AC-C2: F001/F002 的 Provider、筛选、三类详情、CSV、安全与完整性测试全部保持通过；新增 cache/concurrency/progress/remap 覆盖后总测试数只增不减。
-- [ ] AC-C3: 最新 Chrome 在本地静态服务器与 GitHub Pages 上完成首次查询/重复查询/用户重映射 journey，控制台无新增错误。
+- [x] AC-C1: 用户新增、编辑、启禁用、删除和 CSV 导入都会对当前活动重新映射并重渲染，期间 Provider/fetch 调用数为 0；无当前活动时安全 no-op。
+- [x] AC-C2: F001/F002 的 Provider、筛选、三类详情、CSV、安全与完整性测试全部保持通过；新增 cache/concurrency/progress/remap 覆盖后总测试数只增不减。
+- [x] AC-C3: 最新 Chrome 在本地静态服务器完成首次查询、重复查询与用户重映射 journey，控制台无新增错误。
+
+## Release Acceptance Gate
+
+F003 只有在 `main` 发布完成、GitHub Pages 以最终提交运行同一 journey 且控制台无新增错误后才可标记 `done`。部署验收属于 merge 后的发布门禁，不作为 pre-review 实现 AC；验收结果必须回填本文件 Timeline 与 `MAINTAINING.md` 发布记录。
 
 ## Dependencies
 
@@ -176,6 +180,7 @@ Storage.users
 | 日期 | 事件 |
 |------|------|
 | 2026-07-26 | 根因诊断、`file://` IndexedDB 复测、缓存新鲜度取舍确认与 F003 立项 |
+| 2026-07-26 | 实现完成：212/212 浏览器测试通过；本地 Chrome 首查、缓存复查与用户重映射 journey 通过 |
 
 ## Review Gate
 
