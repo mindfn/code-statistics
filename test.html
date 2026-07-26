@@ -693,6 +693,104 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     );
   }
 
+  suite('F003 local user remapping');
+  assert(
+    typeof app.remapCurrentResultsAfterUsersChanged === 'function',
+    'remapCurrentResultsAfterUsersChanged is exposed'
+  );
+  if (typeof app.remapCurrentResultsAfterUsersChanged === 'function') {
+    var remapOriginalFetch = app.fetch;
+    var remapOriginalLoadUsers = app.Storage.loadUsers;
+    var remapFetchCalls = 0;
+    app.fetch = function() {
+      remapFetchCalls++;
+      return Promise.reject(new Error('network must not be used'));
+    };
+    var remapUsers = [{
+      user_key: 'mapped-bob', display_name: 'Mapped Bob',
+      github_login: 'bob-gh', gitcode_login: '', enabled: true
+    }];
+    app.Storage.loadUsers = function() { return remapUsers; };
+    app.StatsEngine.currentActivities = [{
+      platform: 'github', repository: 'org/repo', actor_login: 'bob-gh',
+      user_key: '', display_name: 'bob-gh', matched: false,
+      activity_type: 'comment', completeness: 'full', pr_number: 1,
+      pr_title: 'PR', merged_at: '2026-07-20T00:00:00Z',
+      source_type: 'issue_comment', source_id: '1',
+      event_at: '2026-07-20T00:00:00Z', body_summary: 'hello', activity_url: ''
+    }];
+    app.document.getElementById('stat-user-type').value = 'all';
+    var remapped = app.remapCurrentResultsAfterUsersChanged(remapUsers);
+    assert(remapped === true, 'current results report local remap');
+    assert(app.StatsEngine.currentActivities[0].matched === true, 'existing activity becomes matched');
+    assertEqual(app.StatsEngine.currentActivities[0].user_key, 'mapped-bob', 'existing activity gets current user key');
+    assert(
+      app.document.getElementById('summary-tbody').textContent.indexOf('Mapped Bob') >= 0,
+      'summary DOM rerenders with current display name'
+    );
+    assertEqual(remapFetchCalls, 0, 'local remap performs zero network requests');
+
+    app.StatsEngine.currentActivities = [];
+    assert(app.remapCurrentResultsAfterUsersChanged(remapUsers) === false, 'no current activities is a safe no-op');
+    app.fetch = remapOriginalFetch;
+    app.Storage.loadUsers = remapOriginalLoadUsers;
+  }
+
+  suite('F003 user mutations trigger one remap path');
+  if (typeof app.remapCurrentResultsAfterUsersChanged === 'function') {
+    var wiringOriginalLoadUsers = app.Storage.loadUsers;
+    var wiringOriginalSaveUsers = app.Storage.saveUsers;
+    var wiringOriginalRenderUsers = app.renderUsers;
+    var wiringOriginalRemap = app.remapCurrentResultsAfterUsersChanged;
+    var wiringOriginalCloseUser = app.closeUserDialog;
+    var wiringOriginalCloseImport = app.closeImportDialog;
+    var wiringOriginalConfirm = app.confirm;
+    var wiringUsers = [{
+      user_key: 'alice', display_name: 'Alice', email: '',
+      github_login: 'alice-gh', gitcode_login: '', enabled: true
+    }];
+    var mutationRemaps = 0;
+    app.Storage.loadUsers = function() { return wiringUsers; };
+    app.Storage.saveUsers = function(users) { wiringUsers = users; };
+    app.renderUsers = function() {};
+    app.remapCurrentResultsAfterUsersChanged = function() { mutationRemaps++; return true; };
+    app.closeUserDialog = function() {};
+    app.closeImportDialog = function() {};
+    app.confirm = function() { return true; };
+
+    app.document.getElementById('edit-index').value = '0';
+    app.document.getElementById('edit-user-key').value = 'alice';
+    app.document.getElementById('edit-display-name').value = 'Alice Updated';
+    app.document.getElementById('edit-email').value = '';
+    app.document.getElementById('edit-github-login').value = 'alice-gh';
+    app.document.getElementById('edit-gitcode-login').value = '';
+    app.saveUser({ preventDefault: function() {} });
+    assertEqual(mutationRemaps, 1, 'save/edit triggers remap helper once');
+
+    app.toggleUserEnabled(0, false);
+    assertEqual(mutationRemaps, 2, 'toggle triggers remap helper once');
+
+    app.deleteUser(0);
+    assertEqual(mutationRemaps, 3, 'delete triggers remap helper once');
+
+    app.pendingImportRows = [{
+      record: {
+        user_key: 'bob', display_name: 'Bob', email: '',
+        github_login: 'bob-gh', gitcode_login: '', enabled: true
+      }
+    }];
+    app.confirmImport();
+    assertEqual(mutationRemaps, 4, 'CSV confirm import triggers remap helper once');
+
+    app.Storage.loadUsers = wiringOriginalLoadUsers;
+    app.Storage.saveUsers = wiringOriginalSaveUsers;
+    app.renderUsers = wiringOriginalRenderUsers;
+    app.remapCurrentResultsAfterUsersChanged = wiringOriginalRemap;
+    app.closeUserDialog = wiringOriginalCloseUser;
+    app.closeImportDialog = wiringOriginalCloseImport;
+    app.confirm = wiringOriginalConfirm;
+  }
+
   // --- Aggregation math invariant ---
   suite('Aggregation math');
   abcAgg.forEach(function(r) {

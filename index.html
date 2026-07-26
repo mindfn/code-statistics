@@ -2549,6 +2549,14 @@ function toggleTokenVisibility(inputId) {
 
 // ========== User CRUD ==========
 
+function remapCurrentResultsAfterUsersChanged(users) {
+  if (!StatsEngine.currentActivities || StatsEngine.currentActivities.length === 0) return false;
+  StatsEngine.mapActivitiesToUsers(StatsEngine.currentActivities, users || Storage.loadUsers());
+  refreshFilterDropdowns();
+  renderResults(collectFilters());
+  return true;
+}
+
 function renderUsers() {
   var users = Storage.loadUsers();
   var tbody = document.getElementById('users-tbody');
@@ -2621,6 +2629,7 @@ function saveUser(event) {
   Storage.saveUsers(users);
   closeUserDialog();
   renderUsers();
+  remapCurrentResultsAfterUsersChanged(users);
   return false;
 }
 
@@ -2629,6 +2638,8 @@ function toggleUserEnabled(index, checked) {
   if (index >= 0 && index < users.length) {
     users[index].enabled = checked;
     Storage.saveUsers(users);
+    renderUsers();
+    remapCurrentResultsAfterUsersChanged(users);
   }
 }
 
@@ -2638,6 +2649,7 @@ function deleteUser(index) {
   users.splice(index, 1);
   Storage.saveUsers(users);
   renderUsers();
+  remapCurrentResultsAfterUsersChanged(users);
 }
 
 
@@ -2791,6 +2803,7 @@ function confirmImport() {
   pendingImportRows = [];
   closeImportDialog();
   renderUsers();
+  remapCurrentResultsAfterUsersChanged(users);
 }
 
 function closeImportDialog() {
