@@ -724,6 +724,18 @@ function createLimiter(concurrency, delayMs) {
   };
 }
 
+var ProviderRequestBudget = {
+  limits: { github: 8, gitcode: 16 },
+  _limiters: {},
+
+  schedule: function(platform, fn) {
+    if (!this._limiters[platform]) {
+      this._limiters[platform] = createLimiter(this.limits[platform], 0);
+    }
+    return this._limiters[platform](fn);
+  }
+};
+
 
 // ========== Storage ==========
 
@@ -1072,7 +1084,11 @@ var GitHubProvider = {
   },
 
   _fetch: async function(url, token, signal) {
-    var resp = await fetch(url, { headers: this._headers(token), signal: signal });
+    var self = this;
+    var request = function() {
+      return fetch(url, { headers: self._headers(token), signal: signal });
+    };
+    var resp = await ProviderRequestBudget.schedule('github', request);
     if (resp.status === 403 || resp.status === 429) {
       var remaining = resp.headers.get('X-RateLimit-Remaining');
       var resetAt = resp.headers.get('X-RateLimit-Reset');
@@ -1080,7 +1096,7 @@ var GitHubProvider = {
         var waitMs = Math.max(0, (parseInt(resetAt) * 1000) - Date.now()) + 1000;
         if (waitMs > 120000) throw new Error('GitHub 限流，需等待超过 2 分钟，请稍后重试');
         await sleep(waitMs);
-        resp = await fetch(url, { headers: this._headers(token), signal: signal });
+        resp = await ProviderRequestBudget.schedule('github', request);
       }
     }
     if (!resp.ok) {
@@ -1363,7 +1379,10 @@ var GitCodeProvider = {
   },
 
   _fetch: async function(url, token, signal) {
-    var resp = await fetch(url, { headers: this._headers(token), signal: signal });
+    var self = this;
+    var resp = await ProviderRequestBudget.schedule('gitcode', function() {
+      return fetch(url, { headers: self._headers(token), signal: signal });
+    });
     if (resp.status === 403 || resp.status === 429) {
       throw new Error('GitCode API 限流 (' + resp.status + ')，请稍后重试');
     }

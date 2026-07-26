@@ -357,6 +357,42 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(maxRunning <= 3, 'max concurrent tasks <= 3');
   assert(maxRunning === 3, 'max concurrent tasks reached 3 with 5 tasks');
 
+  // --- F003: provider-level request budgets ---
+  suite('F003 provider request budgets');
+  assert(typeof app.ProviderRequestBudget === 'object' && app.ProviderRequestBudget !== null, 'ProviderRequestBudget is exposed');
+  var originalWindowFetch = app.fetch;
+  var activeRequests = { github: 0, gitcode: 0 };
+  var maxActiveRequests = { github: 0, gitcode: 0 };
+  app.fetch = function(url) {
+    var platform = String(url).indexOf('api.github.com') >= 0 ? 'github' : 'gitcode';
+    activeRequests[platform]++;
+    maxActiveRequests[platform] = Math.max(maxActiveRequests[platform], activeRequests[platform]);
+    return new Promise(function(resolve) {
+      setTimeout(function() {
+        activeRequests[platform]--;
+        resolve({
+          ok: true,
+          status: 200,
+          headers: { get: function() { return null; } },
+          json: function() { return Promise.resolve({}); }
+        });
+      }, 15);
+    });
+  };
+  var budgetCalls = [];
+  for (var ghBudgetIndex = 0; ghBudgetIndex < 24; ghBudgetIndex++) {
+    budgetCalls.push(app.GitHubProvider._fetch('https://api.github.com/test/' + ghBudgetIndex, 'tok'));
+  }
+  for (var gcBudgetIndex = 0; gcBudgetIndex < 32; gcBudgetIndex++) {
+    budgetCalls.push(app.GitCodeProvider._fetch('https://api.gitcode.com/test/' + gcBudgetIndex, 'tok'));
+  }
+  await Promise.all(budgetCalls);
+  app.fetch = originalWindowFetch;
+  assert(maxActiveRequests.github <= 8, 'GitHub request concurrency never exceeds 8 (got ' + maxActiveRequests.github + ')');
+  assert(maxActiveRequests.github > 3, 'GitHub request concurrency can exceed old PR-task limit 3');
+  assert(maxActiveRequests.gitcode <= 16, 'GitCode request concurrency never exceeds 16 (got ' + maxActiveRequests.gitcode + ')');
+  assert(maxActiveRequests.gitcode > 3, 'GitCode request concurrency can exceed old PR-task limit 3');
+
   // --- F003: merged PR cache contract ---
   suite('F003 PR cache key and lifecycle');
   assert(typeof app.prCacheKey === 'function', 'prCacheKey is exposed');
