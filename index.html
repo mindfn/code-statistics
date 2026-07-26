@@ -389,7 +389,8 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
         <div>
           <strong>配置数据仅保存在当前浏览器</strong>
           <p>Token、用户和仓库配置保存在浏览器 <code>localStorage</code>，不会上传到本工具的服务器；Token 仅通过请求头直接发送给 GitHub / GitCode API，导出的 CSV 不包含 Token。</p>
-          <p>清除本网站的浏览器数据会同时清除全部配置，请勿在不受信任的公共设备上保存 Token。</p>
+          <p>通过 <code>http(s)</code>（含 GitHub Pages）使用时，已合入 PR 的代码量、Comments 和 Approve 会缓存在本机 <code>IndexedDB</code>；直接双击 <code>file://</code> 使用时只缓存于当前页面内存。</p>
+          <p>清除本网站的浏览器数据会同时清除全部配置和 PR 缓存，请勿在不受信任的公共设备上保存 Token。</p>
         </div>
       </aside>
 

@@ -31,7 +31,8 @@ Token 仅保存在浏览器 `localStorage`，不会进入导出的 CSV、日志�
 **所有配置和用户数据均保存在浏览器的 `localStorage` 中**，不会上传到本工具自建的服务器。查询时，Token 会通过认证请求头直接发送给 GitHub / GitCode API。
 
 - **无自建后端上传路径** — GitHub Pages 只托管静态文件，不接收 Token、用户信息、仓库配置或统计结果。仍应只在可信设备和可信浏览器环境中使用。
-- **清除浏览器数据会同时清除已导入的配置** — 如果你清除了浏览器的站点数据（localStorage），之前导入或手动添加的用户和仓库配置将一同被清除。当前版本没有一键导出用户配置，建议保留原始导入 CSV；“下载模板”只包含表头和示例行，不是备份。
+- **已合入 PR 缓存在本机** — 通过 GitHub Pages 或其他 `http(s)` 地址使用时，完整的 PR 代码量、Comments 和 Approve 会按 PR 保存在浏览器 IndexedDB；它们不会上传到本工具的服务器。直接双击 `file://` 打开时只使用当前页面内存缓存，关闭页面后失效。
+- **清除浏览器数据会同时清除配置与缓存** — 如果你清除了浏览器的站点数据，之前导入或手动添加的用户和仓库配置及已合入 PR 缓存会一同被清除。当前版本没有一键导出用户配置，建议保留原始导入 CSV；“下载模板”只包含表头和示例行，不是备份。
 - **多设备不同步** — 由于数据存储在本地浏览器，不同设备或不同浏览器之间的数据不会自动同步。可在另一设备重新导入保留的用户 CSV；Token 和仓库列表需要重新配置。
 
 ## 网络与代理
@@ -59,6 +60,7 @@ Token 仅保存在浏览器 `localStorage`，不会进入导出的 CSV、日志�
   - 净增行 = 新增行 - 删除行
 - 产品文案统一称"PR 代码变更量"，不称"产能"或"有效代码量"。
 - GitCode Approve 仅表示查询时的"当前有效 Approve"，不代表完整审批历史。
+- 已合入 PR 的代码量、Comments 与 Approve 作为一个稳定统计单元缓存；重复查询命中后不重新请求该 PR 的详情或协作来源。缓存只接收完整结果，部分/失败条目会在下次查询重新获取。
 
 ## CSV 格式
 
@@ -89,22 +91,23 @@ user_key,display_name,email,github_login,gitcode_login
 | 限制 | 说明 |
 |------|------|
 | GitHub 搜索上限 | 单次搜索最多返回 1000 个 PR。超出时页面标记"部分统计"，建议缩小时间范围 |
-| 请求量增长 | F002 后每个入选 PR 额外请求 Comments / Reviews，较 F001 更容易触发限流；工具已实现分页、有限并发和错误传播 |
+| 请求量增长 | 首次查询仍需读取每个入选 PR 的 Comments / Reviews；实际网络请求由平台级预算限制为 GitHub 8、GitCode 16，并保留分页、限流和错误传播 |
 | GitCode 当前有效 Approve | GitCode 公开 API 没有完整审批历史，仅按 PR 详情中当前 `accept=true` 统计，不表示历史审批动作次数 |
 | GitCode 大文件 PR | 文件过大时 GitCode 返回 `too_large`，该 PR 标记"部分统计"，不会按 0 计算 |
 | 浏览器兼容 | 推荐最新版 Chrome / Edge。Safari 和 Firefox 在 `file://` 下的 localStorage 行为可能不同 |
 | 无应用内代理 | 浏览器 `fetch` 不支持为单次请求指定代理，只能沿用系统/浏览器代理 |
-| IndexedDB | 在 `file://` 协议下不可用，因此使用 localStorage（有 ~5MB 容量限制，通常足够） |
+| `file://` 缓存 | 当前 Chrome 在 `file://` 下无法可靠打开 IndexedDB，因此双击运行只提供页面内存缓存；需要跨重开复用 PR 缓存时请使用 GitHub Pages |
 | Token 安全 | 仅适合可信本机使用。建议用完后及时清除 Token |
 | 配置备份 | 当前没有一键导出用户和仓库配置；请保留原始用户 CSV，并在迁移设备前手工记录仓库列表 |
-| 统计结果不持久化 | 查询结果仅保存在页面内存中，刷新后需重新查询。CSV 是统计结果的持久交付物 |
+| 当前结果与 PR 缓存 | 当前筛选、汇总和详情仍只在页面内存中；刷新后需再次执行仓库级 PR 发现，但 `http(s)` 下已缓存的完整 PR 不再重拉详情与协作来源。CSV 仍是结果的可移植交付物 |
 
 ## 技术说明
 
 - 单个 `index.html`，所有 HTML / CSS / JavaScript 内联，无 CDN、无第三方依赖
 - `localStorage` 持久化配置和用户数据（Key: `code-statistics.config.v1` / `code-statistics.users.v1`）
-- GitHub API: Search Issues + Pull Request Detail + Issue Comments + Review Comments + Reviews；代码包含分页、节流、限流等待和部分结果标记
-- GitCode API v5: Pull Request List + Detail/Files + Comments；代码包含分页、有限并发、限流报错和字段完整性检查
+- IndexedDB 按 `platform + repository + PR number` 持久化完整已合入 PR；schema 不匹配、损坏、partial 或 failed 条目均视为 miss
+- GitHub API: Search Issues + Pull Request Detail + Issue Comments + Review Comments + Reviews；代码包含分页、请求级并发预算、限流等待和部分结果标记
+- GitCode API v5: Pull Request List + Detail/Files + Comments；代码包含分页、请求级并发预算、限流报错和字段完整性检查
 
 ## 维护者入口
 

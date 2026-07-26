@@ -1044,6 +1044,14 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   var privacyNotice = app.document.getElementById('local-data-notice');
   assert(privacyNotice && privacyNotice.textContent.indexOf('localStorage') >= 0, 'config page explains localStorage persistence');
   assert(privacyNotice && privacyNotice.textContent.indexOf('不会上传') >= 0, 'config page explains data is not uploaded');
+  assert(
+    privacyNotice && privacyNotice.textContent.indexOf('IndexedDB') >= 0,
+    'config page discloses merged PR cache persistence'
+  );
+  assert(
+    privacyNotice && privacyNotice.textContent.indexOf('file://') >= 0,
+    'config page discloses file protocol memory-only cache'
+  );
   var filterActions = app.document.querySelector('.filter-actions');
   assert(filterActions && filterActions.contains(app.document.getElementById('btn-query')), 'query button uses dedicated aligned filter action group');
 

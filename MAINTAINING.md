@@ -1,5 +1,5 @@
 ---
-feature_ids: [F001, F002]
+feature_ids: [F001, F002, F003]
 topics: [architecture, maintenance, testing, release, github, gitcode]
 doc_kind: guide
 created: 2026-07-25
@@ -18,7 +18,8 @@ created: 2026-07-25
 - 所有 HTML、CSS、JavaScript 和 favicon 都内联在 `index.html`。
 - 无服务端、数据库、构建工具、运行时依赖或 CDN。
 - `localStorage` 只保存 Token、仓库和用户配置。
-- 查询结果只存在于当前页面内存；CSV 是结果的持久交付物。
+- 当前查询投影只存在于页面内存；完整已合入 PR 在 `http(s)` 下按 PR 持久化到浏览器 IndexedDB，`file://` 下使用页面内存缓存。
+- CSV 是统计结果的可移植持久交付物。
 - GitHub Pages 只托管静态文件；浏览器直接请求 GitHub / GitCode API。
 
 除非需求明确改变产品形态，否则不要为局部功能引入后端、框架、第三方依赖或新的持久化服务。
@@ -41,6 +42,8 @@ created: 2026-07-25
 |---|---|
 | `Utilities` | HTML 转义、仓库 URL 解析、日期半开区间、并发限制器 |
 | `Storage` | 版本化 `localStorage` 读写 |
+| `CacheStore` | 版本化 merged PR cache；HTTP IndexedDB / file Memory 后端 |
+| `ProviderRequestBudget` | 所有真实网络请求的平台级并发预算（GitHub 8 / GitCode 16） |
 | `CSV Helper` | RFC 4180 解析/生成、BOM、公式注入防护、下载 |
 | `GitHub Provider` | 默认分支、merged PR、代码量、Comments、Reviews |
 | `GitCode Provider` | 默认分支、merged PR、代码量、Comments、当前有效 Approve |
@@ -57,8 +60,8 @@ created: 2026-07-25
 localStorage（配置、用户）
   → collectFilters / buildRepoList
   → Provider.getDefaultBranch
-  → Provider.fetchMergedPRs
-  → Provider.fetchCollaboration
+  → Provider.fetchMergedPRs（仓库级发现 → PR cache hit / core hydration）
+  → fetchCollaborationForPR（cache hit / Provider.fetchCollaboration → full-only cache write）
   → 规范化 activity
   → mapActivitiesToUsers
   → applyDisplayFilters
@@ -70,7 +73,7 @@ localStorage（配置、用户）
 
 ## 3. 持久化契约
 
-当前使用两个版本化 Key：
+配置使用两个版本化 localStorage Key：
 
 ```text
 code-statistics.config.v1
@@ -103,13 +106,44 @@ code-statistics.users.v1
 ]
 ```
 
+完整已合入 PR 使用 IndexedDB：
+
+```text
+Database: code-statistics.pr-cache.v1
+Object store: prs
+Key: platform:repository-lowercase#pr-number
+```
+
+```js
+{
+  schemaVersion: 1,
+  cachedAt,
+  platform,
+  repository,
+  prNumber,
+  core,
+  activities,       // raw activity；禁止 user_key / matched / display_name
+  completeness: "full",
+  partialReason: ""
+}
+```
+
+缓存规则：
+
+1. 只有当前 schema、结构一致且 `core/activities` 全部为 `full` 的条目可命中。
+2. schema 不匹配、结构损坏、partial 或 failed 一律 miss；损坏/旧 schema 条目在读取时删除。
+3. 已合入 PR 的 core + collaboration 整体不设时间 TTL；产品明确不追踪少数 merge 后评论/审批变化。
+4. `http(s)` 使用 IndexedDB；初始化失败时降级为当前页面 Memory，不影响统计正确性。`file://` 不尝试 IndexedDB。
+5. IndexedDB 写入只在 readwrite transaction `complete` 后返回成功。
+6. 用户资料不是 cache key；用户变化只重新投影当前 raw activities，不使 PR cache 失效。
+
 演进规则：
 
 1. 新增可选字段时必须为旧数据提供默认值。
 2. 破坏性结构变更必须使用新 Key（如 `.v2`）并实现可回滚迁移。
 3. 迁移完整成功前不得覆盖或删除旧 Key。
 4. Token 不得进入 URL、日志、CSV 或错误详情；界面只显示掩码。
-5. 清除浏览器站点数据会清除全部配置，此行为必须继续在界面和 README 中说明。
+5. 清除浏览器站点数据会清除全部配置与 PR cache，此行为必须继续在界面和 README 中说明。
 
 ## 4. Provider 契约
 
@@ -118,7 +152,7 @@ code-statistics.users.v1
 ```js
 testConnection(token)
 getDefaultBranch(token, owner, repo, signal)
-fetchMergedPRs(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress)
+fetchMergedPRs(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress, cacheStore?)
 fetchCollaboration(token, owner, repo, pr, signal, onProgress)
 ```
 
@@ -135,7 +169,9 @@ fetchCollaboration(token, owner, repo, pr, signal, onProgress)
     }
   ],
   partial: false,
-  partialReason: ""
+  partialReason: "",
+  cacheHits: 0,
+  networkPRs: 0
 }
 ```
 
@@ -197,6 +233,10 @@ fetchCollaboration(token, owner, repo, pr, signal, onProgress)
 12. 失败、限流、字段不可解析或 `too_large` 不得静默当作 0；必须传播为“部分”或“失败”。
 13. 同一查询每个仓库只执行一次 PR 发现流程；协作来源按每个入选 PR 拉取一次。
 14. 汇总页面、详情和两种 CSV 必须遵守相同的平台、用户、仓库及用户范围筛选。
+15. cache hit 必须是同 schema、同 PR identity 的完整条目；partial/failed 不能命中。
+16. 缓存只保存 raw activity；用户归属永远从当前 users 重新投影。
+17. 所有实际网络请求必须经过 Provider `_fetch` 的共享预算；PR 内部 fan-out 不得绕过 GitHub 8 / GitCode 16 上限。
+18. 进度完成数只在 cache hit 或网络任务 settle 后递增；最终标题和仓库行不得保留“正在获取”。
 
 ## 6. 安全边界
 
@@ -242,6 +282,14 @@ fetchCollaboration(token, owner, repo, pr, signal, onProgress)
 3. 验证刷新后配置仍在、失败迁移不丢数据。
 4. 更新本文件“持久化契约”和 README 的用户可见说明。
 
+### 修改 PR cache
+
+1. 先修改 `CACHE_SCHEMA_VERSION` 与 entry validation 测试；不在旧 schema 上猜测兼容。
+2. 缓存只接受 full 数据，禁止为了命中率放宽 partial/failed 门禁。
+3. 不把 `user_key`、`matched`、`display_name` 或 Token 写入 entry。
+4. IndexedDB mutation 必须等待 transaction complete；用 close → reopen 测试持久性。
+5. 同步 README 的协议边界与隐私披露。
+
 ### 修改 UI
 
 1. 保持“配置 / 用户信息 / 统计数据”三个一级页签。
@@ -265,7 +313,7 @@ python3 -m http.server 8901 --bind 127.0.0.1
 http://127.0.0.1:8901/test.html
 ```
 
-当前基线为 `137 passed, 0 failed`；新增行为时测试总数应增加，不应通过删除断言维持全绿。
+F003 开发分支基线为 `212 passed, 0 failed`；新增行为时测试总数应增加，不应通过删除断言维持全绿。
 
 静态检查：
 
@@ -329,4 +377,4 @@ https://mindfn.github.io/code-statistics/
 - API 行为变化 → 更新 Provider、失败传播测试及已知限制。
 - 发布后 → 记录最终 SHA、测试结果和线上验收证据。
 
-仓库的 `.gitignore` 将 `docs/` 用作本地治理资料目录；可随 clone 和发布长期保留的维护说明必须写在已跟踪的 `README.md` 或本文件中，不能只写进被忽略的本地文档。
+`docs/features/`、`docs/discussions/` 与 `feature-specs/` 已纳入版本控制；产品口径变更必须同步 feature truth，不能只改 README 或生产代码。
