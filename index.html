@@ -765,6 +765,231 @@ var Storage = {
   }
 };
 
+var CACHE_SCHEMA_VERSION = 1;
+
+function prCacheKey(platform, repository, prNumber) {
+  return String(platform || '') + ':' + String(repository || '').toLowerCase() + '#' + String(prNumber);
+}
+
+function cloneCacheValue(value) {
+  if (value == null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+var CacheStore = {
+  DB_NAME: 'code-statistics.pr-cache.v1',
+  STORE_NAME: 'prs',
+  _backend: null,
+  _backendPromise: null,
+  mode: '',
+  degradedReason: '',
+
+  createMemoryBackend: function() {
+    var entries = {};
+    return {
+      mode: 'memory',
+      get: async function(key) {
+        return Object.prototype.hasOwnProperty.call(entries, key) ? cloneCacheValue(entries[key]) : null;
+      },
+      put: async function(key, value) {
+        entries[key] = cloneCacheValue(value);
+      },
+      delete: async function(key) {
+        delete entries[key];
+      },
+      clear: async function() {
+        entries = {};
+      },
+      close: function() {}
+    };
+  },
+
+  openIndexedDbBackend: function(dbName) {
+    var self = this;
+    return new Promise(function(resolve, reject) {
+      var request;
+      try {
+        request = indexedDB.open(dbName || self.DB_NAME, 1);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      request.onupgradeneeded = function() {
+        var db = request.result;
+        if (!db.objectStoreNames.contains(self.STORE_NAME)) {
+          db.createObjectStore(self.STORE_NAME);
+        }
+      };
+      request.onerror = function() {
+        reject(request.error || new Error('IndexedDB 打开失败'));
+      };
+      request.onblocked = function() {
+        reject(new Error('IndexedDB 被其他页面占用'));
+      };
+      request.onsuccess = function() {
+        var db = request.result;
+        function transact(mode, action) {
+          return new Promise(function(resolveTx, rejectTx) {
+            var tx;
+            try {
+              tx = db.transaction(self.STORE_NAME, mode);
+              action(tx.objectStore(self.STORE_NAME), resolveTx, rejectTx);
+            } catch (err) {
+              rejectTx(err);
+              return;
+            }
+            tx.onerror = function() {
+              rejectTx(tx.error || new Error('IndexedDB 事务失败'));
+            };
+            tx.onabort = function() {
+              rejectTx(tx.error || new Error('IndexedDB 事务已取消'));
+            };
+          });
+        }
+        resolve({
+          mode: 'indexeddb',
+          get: function(key) {
+            return transact('readonly', function(store, resolveTx, rejectTx) {
+              var getRequest = store.get(key);
+              getRequest.onsuccess = function() {
+                resolveTx(getRequest.result == null ? null : cloneCacheValue(getRequest.result));
+              };
+              getRequest.onerror = function() {
+                rejectTx(getRequest.error || new Error('IndexedDB 读取失败'));
+              };
+            });
+          },
+          put: function(key, value) {
+            return transact('readwrite', function(store, resolveTx, rejectTx) {
+              var putRequest = store.put(cloneCacheValue(value), key);
+              putRequest.onsuccess = function() { resolveTx(); };
+              putRequest.onerror = function() {
+                rejectTx(putRequest.error || new Error('IndexedDB 写入失败'));
+              };
+            });
+          },
+          delete: function(key) {
+            return transact('readwrite', function(store, resolveTx, rejectTx) {
+              var deleteRequest = store.delete(key);
+              deleteRequest.onsuccess = function() { resolveTx(); };
+              deleteRequest.onerror = function() {
+                rejectTx(deleteRequest.error || new Error('IndexedDB 删除失败'));
+              };
+            });
+          },
+          clear: function() {
+            return transact('readwrite', function(store, resolveTx, rejectTx) {
+              var clearRequest = store.clear();
+              clearRequest.onsuccess = function() { resolveTx(); };
+              clearRequest.onerror = function() {
+                rejectTx(clearRequest.error || new Error('IndexedDB 清理失败'));
+              };
+            });
+          },
+          close: function() {
+            db.close();
+          }
+        });
+      };
+    });
+  },
+
+  deleteIndexedDb: function(dbName) {
+    return new Promise(function(resolve, reject) {
+      var request = indexedDB.deleteDatabase(dbName);
+      request.onsuccess = function() { resolve(); };
+      request.onerror = function() { reject(request.error || new Error('IndexedDB 删除失败')); };
+      request.onblocked = function() { reject(new Error('IndexedDB 删除被阻塞')); };
+    });
+  },
+
+  create: function(backend) {
+    var store = Object.create(this);
+    store._backend = backend;
+    store._backendPromise = Promise.resolve(backend);
+    store.mode = backend.mode;
+    store.degradedReason = '';
+    return store;
+  },
+
+  _getBackend: function() {
+    var self = this;
+    if (this._backend) return Promise.resolve(this._backend);
+    if (this._backendPromise) return this._backendPromise;
+    if ((location.protocol === 'http:' || location.protocol === 'https:') && typeof indexedDB !== 'undefined') {
+      this._backendPromise = this.openIndexedDbBackend(this.DB_NAME)
+        .catch(function(err) {
+          self.degradedReason = err && err.message ? err.message : 'IndexedDB 不可用';
+          return self.createMemoryBackend();
+        })
+        .then(function(backend) {
+          self._backend = backend;
+          self.mode = backend.mode;
+          return backend;
+        });
+    } else {
+      this._backend = this.createMemoryBackend();
+      this.mode = this._backend.mode;
+      this._backendPromise = Promise.resolve(this._backend);
+    }
+    return this._backendPromise;
+  },
+
+  _isValidEntry: function(entry) {
+    if (!entry || entry.schemaVersion !== CACHE_SCHEMA_VERSION) return false;
+    if (!entry.platform || !entry.repository || entry.prNumber == null) return false;
+    if (!entry.core || !Array.isArray(entry.activities)) return false;
+    if (entry.completeness !== 'full' || entry.core.completeness !== 'full') return false;
+    return entry.activities.every(function(activity) {
+      return activity && activity.completeness === 'full';
+    });
+  },
+
+  _sanitizeEntry: function(entry) {
+    var clean = cloneCacheValue(entry);
+    clean.schemaVersion = CACHE_SCHEMA_VERSION;
+    clean.cachedAt = clean.cachedAt || new Date().toISOString();
+    clean.activities.forEach(function(activity) {
+      delete activity.user_key;
+      delete activity.display_name;
+      delete activity.matched;
+    });
+    return clean;
+  },
+
+  get: async function(platform, repository, prNumber) {
+    var backend = await this._getBackend();
+    var key = prCacheKey(platform, repository, prNumber);
+    var entry;
+    try {
+      entry = await backend.get(key);
+    } catch (err) {
+      this.degradedReason = err && err.message ? err.message : '缓存读取失败';
+      return null;
+    }
+    if (!this._isValidEntry(entry)) {
+      if (entry != null) {
+        try { await backend.delete(key); } catch (err) {}
+      }
+      return null;
+    }
+    return cloneCacheValue(entry);
+  },
+
+  put: async function(entry) {
+    if (!this._isValidEntry(entry)) return false;
+    var clean = this._sanitizeEntry(entry);
+    var backend = await this._getBackend();
+    try {
+      await backend.put(prCacheKey(clean.platform, clean.repository, clean.prNumber), clean);
+      return true;
+    } catch (err) {
+      this.degradedReason = err && err.message ? err.message : '缓存写入失败';
+      return false;
+    }
+  }
+};
+
 
 // ========== CSV Helper ==========
 

@@ -357,6 +357,103 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(maxRunning <= 3, 'max concurrent tasks <= 3');
   assert(maxRunning === 3, 'max concurrent tasks reached 3 with 5 tasks');
 
+  // --- F003: merged PR cache contract ---
+  suite('F003 PR cache key and lifecycle');
+  assert(typeof app.prCacheKey === 'function', 'prCacheKey is exposed');
+  assert(typeof app.CacheStore === 'object' && app.CacheStore !== null, 'CacheStore is exposed');
+  if (typeof app.prCacheKey === 'function' && app.CacheStore) {
+    assertEqual(
+      app.prCacheKey('github', 'Org/Repo', 42),
+      'github:org/repo#42',
+      'cache key normalizes repository case'
+    );
+
+    var memoryBackend = app.CacheStore.createMemoryBackend();
+    var memoryCache = app.CacheStore.create(memoryBackend);
+    var fullEntry = {
+      schemaVersion: app.CACHE_SCHEMA_VERSION,
+      cachedAt: '2026-07-26T00:00:00.000Z',
+      platform: 'github',
+      repository: 'Org/Repo',
+      prNumber: 42,
+      core: {
+        platform: 'github', repo: 'Org/Repo', number: 42, author: 'alice',
+        mergedAt: '2026-07-25T00:00:00Z', additions: 10, deletions: 2,
+        changedFiles: 1, completeness: 'full', url: 'https://example.test/42'
+      },
+      activities: [{
+        activity_type: 'comment', platform: 'github', repository: 'Org/Repo',
+        pr_number: 42, actor_login: 'bob', user_key: 'local-bob',
+        display_name: 'Local Bob', matched: true, completeness: 'full'
+      }],
+      completeness: 'full',
+      partialReason: ''
+    };
+
+    assert(await memoryCache.put(fullEntry) === true, 'full entry is accepted');
+    var firstHit = await memoryCache.get('github', 'Org/Repo', 42);
+    assert(firstHit && firstHit.core.additions === 10, 'full current-schema entry hits');
+    assert(!('user_key' in firstHit.activities[0]), 'user_key projection is stripped before caching');
+    assert(!('display_name' in firstHit.activities[0]), 'display_name projection is stripped before caching');
+    assert(!('matched' in firstHit.activities[0]), 'matched projection is stripped before caching');
+    firstHit.core.additions = 999;
+    var secondHit = await memoryCache.get('github', 'Org/Repo', 42);
+    assert(secondHit.core.additions === 10, 'cache reads return a defensive clone');
+
+    var partialEntry = Object.assign({}, fullEntry, {
+      prNumber: 43,
+      core: Object.assign({}, fullEntry.core, { number: 43 }),
+      completeness: 'partial',
+      partialReason: 'Comments 获取失败'
+    });
+    assert(await memoryCache.put(partialEntry) === false, 'partial entry is rejected');
+    assert((await memoryCache.get('github', 'Org/Repo', 43)) === null, 'partial entry never hits');
+
+    var staleEntry = Object.assign({}, fullEntry, {
+      prNumber: 44,
+      core: Object.assign({}, fullEntry.core, { number: 44 }),
+      schemaVersion: app.CACHE_SCHEMA_VERSION - 1
+    });
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 44), staleEntry);
+    assert((await memoryCache.get('github', 'Org/Repo', 44)) === null, 'stale schema is a miss');
+    assert((await memoryBackend.get(app.prCacheKey('github', 'Org/Repo', 44))) === null, 'stale schema is removed');
+
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 45), { broken: true });
+    assert((await memoryCache.get('github', 'Org/Repo', 45)) === null, 'corrupt entry is a miss');
+  }
+
+  suite('F003 IndexedDB persistence');
+  if (app.CacheStore && typeof app.CacheStore.openIndexedDbBackend === 'function' && app.indexedDB) {
+    var cacheDbName = 'code-statistics-test-' + Date.now();
+    var idbBackendOne = await app.CacheStore.openIndexedDbBackend(cacheDbName);
+    var idbCacheOne = app.CacheStore.create(idbBackendOne);
+    var idbEntry = {
+      schemaVersion: app.CACHE_SCHEMA_VERSION,
+      cachedAt: '2026-07-26T00:00:00.000Z',
+      platform: 'gitcode',
+      repository: 'org/repo',
+      prNumber: 7,
+      core: {
+        platform: 'gitcode', repo: 'org/repo', number: 7, author: 'alice',
+        mergedAt: '2026-07-25T00:00:00Z', additions: 1, deletions: 0,
+        changedFiles: 1, completeness: 'full', url: 'https://example.test/7'
+      },
+      activities: [],
+      completeness: 'full',
+      partialReason: ''
+    };
+    await idbCacheOne.put(idbEntry);
+    idbBackendOne.close();
+    var idbBackendTwo = await app.CacheStore.openIndexedDbBackend(cacheDbName);
+    var idbCacheTwo = app.CacheStore.create(idbBackendTwo);
+    var reopenedHit = await idbCacheTwo.get('gitcode', 'org/repo', 7);
+    assert(reopenedHit && reopenedHit.core.number === 7, 'IndexedDB entry survives close and reopen');
+    idbBackendTwo.close();
+    await app.CacheStore.deleteIndexedDb(cacheDbName);
+  } else {
+    assert(false, 'IndexedDB cache API is available on HTTP');
+  }
+
   // --- Aggregation math invariant ---
   suite('Aggregation math');
   abcAgg.forEach(function(r) {
