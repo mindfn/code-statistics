@@ -187,7 +187,7 @@ function prCacheKey(platform, repository, prNumber) {
 - Modify: `test.html`
 - Modify: `index.html`
 
-1. 添加 deferred Promise 红测试，证明任务启动时 completed 仍为 0、settle 后才递增。
+1. 添加可控 Promise 红测试，证明任务启动时 completed 仍为 0、settle 后才递增。
 2. 添加 DOM 红测试：full/partial/failed/cancelled finalize 后标题无“正在”，仓库行包含 total/cache/network/reason。
 3. 提取纯 `createQueryProgress` 与 render helper；所有 hit/network settle 通过同一入口。
 4. `finally` 恢复按钮状态；abort 后 ignore 晚到 success。

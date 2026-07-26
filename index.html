@@ -1168,7 +1168,7 @@ var GitHubProvider = {
       return (async function() {
         var cached = null;
         if (cacheStore) {
-          try { cached = await cacheStore.get('github', owner + '/' + repo, item.number); } catch (err) {}
+          cached = await cacheStore.get('github', owner + '/' + repo, item.number);
         }
         if (cached) {
           var cachedCore = cloneCacheValue(cached.core);
@@ -1479,7 +1479,7 @@ var GitCodeProvider = {
       return (async function() {
         var cached = null;
         if (cacheStore) {
-          try { cached = await cacheStore.get('gitcode', owner + '/' + repo, pr.number); } catch (err) {}
+          cached = await cacheStore.get('gitcode', owner + '/' + repo, pr.number);
         }
         if (cached) {
           var cachedCore = cloneCacheValue(cached.core);
