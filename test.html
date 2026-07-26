@@ -490,6 +490,209 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     assert(false, 'IndexedDB cache API is available on HTTP');
   }
 
+  suite('F003 GitHub PR core cache integration');
+  var ghCacheOriginalFetch = app.GitHubProvider._fetch;
+  var ghDetailCalls = 0;
+  app.GitHubProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({ total_count: 1, incomplete_results: false, items: [{ number: 42 }] });
+    }
+    if (url.indexOf('/pulls/42') >= 0) {
+      ghDetailCalls++;
+      return Promise.resolve({
+        number: 42, title: 'Cached PR', user: { login: 'alice' },
+        merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' },
+        additions: 10, deletions: 2, changed_files: 1
+      });
+    }
+    return Promise.resolve({});
+  };
+  var ghCoreCache = {
+    get: function() {
+      return Promise.resolve({
+        core: {
+          platform: 'github', repo: 'org/repo', number: 42, title: 'Cached PR',
+          author: 'alice', mergedAt: '2026-07-20T00:00:00Z', baseBranch: 'main',
+          additions: 10, deletions: 2, changedFiles: 1, completeness: 'full',
+          url: 'https://github.com/org/repo/pull/42'
+        },
+        activities: [{ activity_type: 'comment', completeness: 'full', actor_login: 'bob' }]
+      });
+    }
+  };
+  var ghCachedResult = await app.GitHubProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, ghCoreCache
+  );
+  assertEqual(ghDetailCalls, 0, 'GitHub cache hit skips PR detail request');
+  assertEqual(ghCachedResult.cacheHits, 1, 'GitHub result reports one cache hit');
+  assertEqual(ghCachedResult.networkPRs, 0, 'GitHub result reports zero network PR hydrations');
+  assert(ghCachedResult.prs[0] && ghCachedResult.prs[0]._cacheHit === true, 'GitHub cached core is marked as hit');
+  assert(
+    ghCachedResult.prs[0] && Array.isArray(ghCachedResult.prs[0]._cachedActivities) &&
+      ghCachedResult.prs[0]._cachedActivities.length === 1,
+    'GitHub cached activities travel with the core'
+  );
+  app.GitHubProvider._fetch = ghCacheOriginalFetch;
+
+  suite('F003 GitCode PR core cache integration');
+  var gcCacheOriginalFetch = app.GitCodeProvider._fetch;
+  var gcStatsCalls = 0;
+  app.GitCodeProvider._fetch = function(url) {
+    if (url.indexOf('/pulls?') >= 0) {
+      return Promise.resolve([{
+        number: 7, title: 'Cached GC PR', user: { login: 'alice' },
+        merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' },
+        html_url: 'https://gitcode.com/org/repo/pulls/7'
+      }]);
+    }
+    gcStatsCalls++;
+    return Promise.resolve({ additions: 1, deletions: 0, changed_files: 1 });
+  };
+  var gcCoreCache = {
+    get: function() {
+      return Promise.resolve({
+        core: {
+          platform: 'gitcode', repo: 'org/repo', number: 7, title: 'Cached GC PR',
+          author: 'alice', mergedAt: '2026-07-20T00:00:00Z', baseBranch: 'main',
+          additions: 1, deletions: 0, changedFiles: 1, completeness: 'full',
+          url: 'https://gitcode.com/org/repo/pulls/7'
+        },
+        activities: []
+      });
+    }
+  };
+  var gcCachedResult = await app.GitCodeProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, gcCoreCache
+  );
+  assertEqual(gcStatsCalls, 0, 'GitCode cache hit skips code-stat request');
+  assertEqual(gcCachedResult.cacheHits, 1, 'GitCode result reports one cache hit');
+  assertEqual(gcCachedResult.networkPRs, 0, 'GitCode result reports zero network PR hydrations');
+  assert(gcCachedResult.prs[0] && gcCachedResult.prs[0]._cacheHit === true, 'GitCode cached core is marked as hit');
+  app.GitCodeProvider._fetch = gcCacheOriginalFetch;
+
+  suite('F003 collaboration cache integration');
+  assert(typeof app.fetchCollaborationForPR === 'function', 'fetchCollaborationForPR is exposed');
+  if (typeof app.fetchCollaborationForPR === 'function') {
+    var collabProviderCalls = 0;
+    var collabCacheWrites = 0;
+    var collabProvider = {
+      fetchCollaboration: function() {
+        collabProviderCalls++;
+        return Promise.resolve({
+          activities: [{ activity_type: 'comment', completeness: 'full', actor_login: 'bob' }],
+          partial: false,
+          partialReason: ''
+        });
+      }
+    };
+    var collabCache = {
+      put: function() {
+        collabCacheWrites++;
+        return Promise.resolve(true);
+      }
+    };
+    var cachedCollabResult = await app.fetchCollaborationForPR({
+      provider: collabProvider,
+      token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: {
+        _cacheHit: true,
+        _cachedActivities: [{ activity_type: 'approval', completeness: 'full', actor_login: 'carol' }]
+      }
+    }, new AbortController().signal, collabCache, function(){});
+    assertEqual(collabProviderCalls, 0, 'cached collaboration skips Provider');
+    assertEqual(cachedCollabResult.activities.length, 1, 'cached collaboration returns raw activities');
+    assert(cachedCollabResult.cacheHit === true, 'cached collaboration reports hit');
+
+    var networkPr = {
+      platform: 'github', repo: 'org/repo', number: 8, title: 'Network PR',
+      author: 'alice', mergedAt: '2026-07-20T00:00:00Z', baseBranch: 'main',
+      additions: 2, deletions: 1, changedFiles: 1, completeness: 'full',
+      url: 'https://github.com/org/repo/pull/8'
+    };
+    var networkCollabResult = await app.fetchCollaborationForPR({
+      provider: collabProvider, token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: networkPr
+    }, new AbortController().signal, collabCache, function(){});
+    assertEqual(collabProviderCalls, 1, 'cache miss fetches collaboration once');
+    assertEqual(collabCacheWrites, 1, 'full collaboration writes one cache entry');
+    assert(networkCollabResult.cacheHit === false, 'network collaboration reports miss');
+
+    collabProvider.fetchCollaboration = function() {
+      collabProviderCalls++;
+      return Promise.resolve({ activities: [], partial: true, partialReason: 'Comments 获取失败' });
+    };
+    var partialCollabResult = await app.fetchCollaborationForPR({
+      provider: collabProvider, token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: Object.assign({}, networkPr, { number: 9 })
+    }, new AbortController().signal, collabCache, function(){});
+    assert(partialCollabResult.partial === true, 'partial collaboration remains partial');
+    assertEqual(collabCacheWrites, 1, 'partial collaboration is not cached');
+  }
+
+  suite('F003 query progress state machine');
+  assert(typeof app.createQueryProgress === 'function', 'createQueryProgress is exposed');
+  assert(typeof app.formatQueryTerminal === 'function', 'formatQueryTerminal is exposed');
+  assert(typeof app.formatRepoTerminal === 'function', 'formatRepoTerminal is exposed');
+  if (typeof app.createQueryProgress === 'function' &&
+      typeof app.formatQueryTerminal === 'function' &&
+      typeof app.formatRepoTerminal === 'function') {
+    var queryProgress = app.createQueryProgress(2);
+    assertEqual(queryProgress.snapshot(), {
+      total: 2, completed: 0, cacheHits: 0, networkPRs: 0
+    }, 'new progress starts at zero completed');
+    assert(queryProgress.settle('github:org/repo#1', 'cache') === true, 'first cache hit settles');
+    assertEqual(queryProgress.snapshot(), {
+      total: 2, completed: 1, cacheHits: 1, networkPRs: 0
+    }, 'cache hit increments completed and cache count');
+    assert(queryProgress.settle('github:org/repo#1', 'network') === false, 'duplicate settle is ignored');
+    assertEqual(queryProgress.snapshot().completed, 1, 'duplicate settle does not overcount');
+    queryProgress.settle('github:org/repo#2', 'network');
+    assertEqual(queryProgress.snapshot(), {
+      total: 2, completed: 2, cacheHits: 1, networkPRs: 1
+    }, 'network settle reaches exact total');
+
+    var fullStatuses = [{
+      repo: { platform: 'github', owner: 'org', repo: 'repo' },
+      status: 'ok', totalPRs: 2, completedPRs: 2, cacheHits: 1, networkPRs: 1
+    }];
+    var fullTitle = app.formatQueryTerminal(queryProgress.snapshot(), fullStatuses, false);
+    assert(fullTitle.indexOf('查询完成') === 0, 'full query has completed terminal');
+    assert(fullTitle.indexOf('缓存 1') >= 0 && fullTitle.indexOf('网络 1') >= 0, 'full terminal shows cache/network counts');
+    assert(fullTitle.indexOf('正在') < 0, 'full terminal is not still running');
+
+    var partialStatuses = [{
+      repo: { platform: 'gitcode', owner: 'org', repo: 'repo' },
+      status: 'partial', partialReason: 'Comments 获取失败',
+      totalPRs: 2, completedPRs: 2, cacheHits: 0, networkPRs: 2
+    }];
+    var partialTitle = app.formatQueryTerminal(queryProgress.snapshot(), partialStatuses, false);
+    assert(partialTitle.indexOf('查询完成（部分）') === 0, 'partial query has partial terminal');
+    var partialRepo = app.formatRepoTerminal(partialStatuses[0]);
+    assert(partialRepo.icon === '⚠️', 'partial repo uses warning icon');
+    assert(partialRepo.text.indexOf('Comments 获取失败') >= 0, 'partial repo exposes reason');
+    assert(partialRepo.text.indexOf('2/2 PR') >= 0, 'partial repo exposes settled PR count');
+
+    var failedStatuses = [{
+      repo: { platform: 'github', owner: 'org', repo: 'broken' },
+      status: 'failed', error: 'GitHub API 500'
+    }];
+    assert(
+      app.formatQueryTerminal(queryProgress.snapshot(), failedStatuses, false).indexOf('查询完成（有失败）') === 0,
+      'failed query has failed terminal'
+    );
+    assert(app.formatRepoTerminal(failedStatuses[0]).text.indexOf('GitHub API 500') >= 0, 'failed repo exposes reason');
+    assertEqual(
+      app.formatQueryTerminal(queryProgress.snapshot(), fullStatuses, true),
+      '查询已取消',
+      'cancelled query has unique terminal'
+    );
+  }
+
   // --- Aggregation math invariant ---
   suite('Aggregation math');
   abcAgg.forEach(function(r) {
