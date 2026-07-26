@@ -8,10 +8,6 @@ CLAUDE.md
 GEMINI.md
 KIMI.md
 
-# Internal project management
-BACKLOG.md
-docs/
-
 # Test artifacts
 .playwright-mcp/
 screenshots/
