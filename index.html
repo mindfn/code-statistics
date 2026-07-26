@@ -845,7 +845,7 @@ var CacheStore = {
             var tx;
             try {
               tx = db.transaction(self.STORE_NAME, mode);
-              action(tx.objectStore(self.STORE_NAME), resolveTx, rejectTx);
+              action(tx.objectStore(self.STORE_NAME), resolveTx, rejectTx, tx);
             } catch (err) {
               rejectTx(err);
               return;
@@ -872,30 +872,30 @@ var CacheStore = {
             });
           },
           put: function(key, value) {
-            return transact('readwrite', function(store, resolveTx, rejectTx) {
+            return transact('readwrite', function(store, resolveTx, rejectTx, tx) {
               var putRequest = store.put(cloneCacheValue(value), key);
-              putRequest.onsuccess = function() { resolveTx(); };
               putRequest.onerror = function() {
                 rejectTx(putRequest.error || new Error('IndexedDB 写入失败'));
               };
+              tx.oncomplete = function() { resolveTx(); };
             });
           },
           delete: function(key) {
-            return transact('readwrite', function(store, resolveTx, rejectTx) {
+            return transact('readwrite', function(store, resolveTx, rejectTx, tx) {
               var deleteRequest = store.delete(key);
-              deleteRequest.onsuccess = function() { resolveTx(); };
               deleteRequest.onerror = function() {
                 rejectTx(deleteRequest.error || new Error('IndexedDB 删除失败'));
               };
+              tx.oncomplete = function() { resolveTx(); };
             });
           },
           clear: function() {
-            return transact('readwrite', function(store, resolveTx, rejectTx) {
+            return transact('readwrite', function(store, resolveTx, rejectTx, tx) {
               var clearRequest = store.clear();
-              clearRequest.onsuccess = function() { resolveTx(); };
               clearRequest.onerror = function() {
                 rejectTx(clearRequest.error || new Error('IndexedDB 清理失败'));
               };
+              tx.oncomplete = function() { resolveTx(); };
             });
           },
           close: function() {
@@ -952,8 +952,14 @@ var CacheStore = {
     if (!entry.platform || !entry.repository || entry.prNumber == null) return false;
     if (!entry.core || !Array.isArray(entry.activities)) return false;
     if (entry.completeness !== 'full' || entry.core.completeness !== 'full') return false;
+    if (entry.core.platform !== entry.platform) return false;
+    if (String(entry.core.repo || '').toLowerCase() !== String(entry.repository).toLowerCase()) return false;
+    if (String(entry.core.number) !== String(entry.prNumber)) return false;
     return entry.activities.every(function(activity) {
-      return activity && activity.completeness === 'full';
+      return activity && activity.completeness === 'full' &&
+        activity.platform === entry.platform &&
+        String(activity.repository || '').toLowerCase() === String(entry.repository).toLowerCase() &&
+        String(activity.pr_number) === String(entry.prNumber);
     });
   },
 
@@ -1221,6 +1227,12 @@ var GitHubProvider = {
       });
     });
     await Promise.all(detailPromises);
+    var incompletePRCount = prs.filter(function(pr) { return pr.completeness !== 'full'; }).length;
+    if (incompletePRCount > 0) {
+      partial = true;
+      partialReason = (partialReason ? partialReason + '; ' : '') +
+        incompletePRCount + ' 个 PR 代码量不完整';
+    }
     return {
       prs: prs,
       partial: partial,
@@ -1510,10 +1522,13 @@ var GitCodeProvider = {
       });
     });
     await Promise.all(detailPromises);
+    var incompletePRCount = prs.filter(function(resultPr) {
+      return resultPr.completeness !== 'full';
+    }).length;
     return {
       prs: prs,
-      partial: false,
-      partialReason: '',
+      partial: incompletePRCount > 0,
+      partialReason: incompletePRCount > 0 ? incompletePRCount + ' 个 PR 代码量不完整' : '',
       cacheHits: cacheHits,
       networkPRs: networkPRs
     };

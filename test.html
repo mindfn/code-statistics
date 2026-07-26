@@ -456,6 +456,13 @@ document.getElementById('app-frame').addEventListener('load', async function() {
 
     await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 45), { broken: true });
     assert((await memoryCache.get('github', 'Org/Repo', 45)) === null, 'corrupt entry is a miss');
+
+    var mismatchedEntry = Object.assign({}, fullEntry, {
+      prNumber: 46,
+      core: Object.assign({}, fullEntry.core, { number: 999 })
+    });
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 46), mismatchedEntry);
+    assert((await memoryCache.get('github', 'Org/Repo', 46)) === null, 'key/core identity mismatch is a miss');
   }
 
   suite('F003 IndexedDB persistence');
@@ -633,6 +640,53 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     assert(partialCollabResult.partial === true, 'partial collaboration remains partial');
     assertEqual(collabCacheWrites, 1, 'partial collaboration is not cached');
   }
+
+  suite('F003 PR core partial reason propagation');
+  var corePartialGhOriginalFetch = app.GitHubProvider._fetch;
+  app.GitHubProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({ total_count: 1, incomplete_results: false, items: [{ number: 99 }] });
+    }
+    return Promise.resolve({
+      number: 99, title: 'Bad metrics', user: { login: 'alice' },
+      merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' },
+      additions: 'bad', deletions: 1, changed_files: 1
+    });
+  };
+  var ghCorePartialResult = await app.GitHubProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, { get: function(){ return Promise.resolve(null); } }
+  );
+  app.GitHubProvider._fetch = corePartialGhOriginalFetch;
+  assert(ghCorePartialResult.partial === true, 'GitHub invalid PR metrics mark repository partial');
+  assert(
+    ghCorePartialResult.partialReason.indexOf('1 个 PR 代码量不完整') >= 0,
+    'GitHub partial reason reports incomplete PR count'
+  );
+
+  var corePartialGcOriginalFetch = app.GitCodeProvider._fetch;
+  app.GitCodeProvider._fetch = function(url) {
+    if (url.indexOf('/pulls?') >= 0) {
+      return Promise.resolve([{
+        number: 77, title: 'Too large', user: { login: 'alice' },
+        merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' }
+      }]);
+    }
+    if (url.indexOf('/files') >= 0) {
+      return Promise.resolve([{ additions: 1, deletions: 1, too_large: true }]);
+    }
+    return Promise.resolve({ additions: null, deletions: null, changed_files: null });
+  };
+  var gcCorePartialResult = await app.GitCodeProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, { get: function(){ return Promise.resolve(null); } }
+  );
+  app.GitCodeProvider._fetch = corePartialGcOriginalFetch;
+  assert(gcCorePartialResult.partial === true, 'GitCode too_large marks repository partial');
+  assert(
+    gcCorePartialResult.partialReason.indexOf('1 个 PR 代码量不完整') >= 0,
+    'GitCode partial reason reports incomplete PR count'
+  );
 
   suite('F003 query progress state machine');
   assert(typeof app.createQueryProgress === 'function', 'createQueryProgress is exposed');
