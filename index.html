@@ -49,12 +49,28 @@ body {
 /* ========== Layout ========== */
 .app { max-width: 1340px; margin: 0 auto; padding: 32px; }
 .app-header { margin-bottom: 28px; }
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
 .app-header h1 {
   font-size: 1.5rem;
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 0;
   letter-spacing: -0.01em;
 }
+.repo-link {
+  color: var(--text-2);
+  font-size: .85rem;
+  font-weight: 500;
+  transition: color .15s;
+  flex-shrink: 0;
+}
+.repo-link:hover { color: var(--primary); text-decoration: none; }
 .tabs {
   display: inline-flex;
   gap: 2px;
@@ -119,6 +135,12 @@ body {
   border-color: var(--focus);
   box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.3);
 }
+.form-row input[type="date"]::-webkit-calendar-picker-indicator,
+.filter-group input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.8;
+  cursor: pointer;
+}
 .form-row .token-display { font-family: var(--mono); font-size: .85rem; color: var(--text-2); margin-left: 4px; }
 
 /* ========== Buttons ========== */
@@ -162,6 +184,21 @@ thead th {
   font-size: 0.8rem;
   white-space: nowrap; position: sticky; top: 0; z-index: 1;
 }
+thead th.sortable { cursor: pointer; user-select: none; }
+thead th.sortable:hover { color: var(--text); }
+thead th.sortable .sort-arrows {
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 1;
+  margin-left: 4px;
+  vertical-align: middle;
+  gap: 1px;
+}
+thead th.sortable .sort-arrow {
+  color: var(--text-3);
+  font-size: .55rem;
+}
+thead th.sortable .sort-arrow.active { color: var(--primary); }
 tbody td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--text); }
 tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
 tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
@@ -256,6 +293,36 @@ td.actions { white-space: nowrap; }
 .progress-list { list-style: none; font-size: .85rem; }
 .progress-list li { padding: 4px 0; display: flex; align-items: center; gap: 8px; color: var(--text-2); }
 .progress-list .icon { width: 18px; text-align: center; flex-shrink: 0; }
+
+.error-summary { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.error-summary details > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: .85rem;
+  color: var(--error);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.error-summary details > summary::-webkit-details-marker { display: none; }
+.error-summary ul { margin: 8px 0 0 0; list-style: none; }
+.error-summary li { margin-bottom: 10px; }
+.error-detail-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  line-height: 1.5;
+}
+.error-detail-full {
+  margin: 6px 0 0 0;
+  padding: 8px 10px;
+  background: var(--input-bg);
+  border-radius: 6px;
+  font-size: .78rem;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
 
 /* ========== Dialog ========== */
 dialog {
@@ -368,7 +435,10 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
 <body>
 <div class="app">
   <header class="app-header">
-    <h1>PR 代码变更统计</h1>
+    <div class="header-top">
+      <h1>PR 代码变更统计</h1>
+      <a class="repo-link" href="https://github.com/mindfn/code-statistics" target="_blank" rel="noopener">GitHub 仓库</a>
+    </div>
     <nav class="tabs" id="tab-nav">
       <button class="tab active" data-tab="stats">统计数据</button>
       <button class="tab" data-tab="users">用户</button>
@@ -389,7 +459,8 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
         <div>
           <strong>配置数据仅保存在当前浏览器</strong>
           <p>Token、用户和仓库配置保存在浏览器 <code>localStorage</code>，不会上传到本工具的服务器；Token 仅通过请求头直接发送给 GitHub / GitCode API，导出的 CSV 不包含 Token。</p>
-          <p>清除本网站的浏览器数据会同时清除全部配置，请勿在不受信任的公共设备上保存 Token。</p>
+          <p>通过 <code>http(s)</code>（含 GitHub Pages）使用时，已合入 PR 的代码量、Comments 和 Approve 会缓存在本机 <code>IndexedDB</code>；直接双击 <code>file://</code> 使用时只缓存于当前页面内存。</p>
+          <p>清除本网站的浏览器数据会同时清除全部配置和 PR 缓存，请勿在不受信任的公共设备上保存 Token。</p>
         </div>
       </aside>
 
@@ -397,14 +468,14 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
         <h2>GitHub Token</h2>
         <div class="form-row">
           <label for="github-token">Token</label>
-          <input type="password" id="github-token" placeholder="ghp_... 或 github_pat_...">
+          <input type="password" id="github-token" placeholder="ghp_... 或 github_pat_..."
+            oninput="scheduleAutoSaveToken('github')" onchange="scheduleAutoSaveToken('github')">
           <button class="btn btn-sm" onclick="toggleTokenVisibility('github-token')">显示</button>
         </div>
         <div class="form-row">
           <label></label>
-          <button class="btn btn-primary btn-sm" onclick="saveToken('github')">保存</button>
           <button class="btn btn-danger btn-sm" onclick="clearToken('github')">清除</button>
-          <button class="btn btn-sm" onclick="testConnection('github')">测试并保存</button>
+          <button class="btn btn-sm" onclick="testConnection('github')">测试</button>
           <span id="github-status"></span>
         </div>
         <div class="form-row">
@@ -417,14 +488,14 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
         <h2>GitCode Token</h2>
         <div class="form-row">
           <label for="gitcode-token">Token</label>
-          <input type="password" id="gitcode-token" placeholder="私人令牌">
+          <input type="password" id="gitcode-token" placeholder="私人令牌"
+            oninput="scheduleAutoSaveToken('gitcode')" onchange="scheduleAutoSaveToken('gitcode')">
           <button class="btn btn-sm" onclick="toggleTokenVisibility('gitcode-token')">显示</button>
         </div>
         <div class="form-row">
           <label></label>
-          <button class="btn btn-primary btn-sm" onclick="saveToken('gitcode')">保存</button>
           <button class="btn btn-danger btn-sm" onclick="clearToken('gitcode')">清除</button>
-          <button class="btn btn-sm" onclick="testConnection('gitcode')">测试并保存</button>
+          <button class="btn btn-sm" onclick="testConnection('gitcode')">测试</button>
           <span id="gitcode-status"></span>
         </div>
       </div>
@@ -542,13 +613,7 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
         <h3 class="mb-8">汇总</h3>
         <div class="table-wrap" style="max-height:400px; overflow-y:auto;">
           <table>
-            <thead>
-              <tr>
-                <th>平台</th><th>用户</th><th>显示名</th><th>仓库</th>
-                <th>开发 PR</th><th>Comments</th><th>Approve</th>
-                <th>新增行</th><th>删除行</th><th>变更行</th><th>净增行</th><th>变更文件数</th><th>完整性</th>
-              </tr>
-            </thead>
+            <thead id="summary-thead"></thead>
             <tbody id="summary-tbody"></tbody>
           </table>
         </div>
@@ -704,6 +769,35 @@ function dateRangeToTimestamps(startStr, endStr) {
 
 function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 
+function classifyError(message) {
+  var m = String(message || '');
+  if (m.indexOf('429') >= 0 || m.indexOf('限流') >= 0 || m.indexOf('rate limit') >= 0 || m.indexOf('rate_limit') >= 0) {
+    return { category: 'rate-limit', short: '请求过于频繁（429，上游限流）', detail: m };
+  }
+  if (m.indexOf('401') >= 0 || m.indexOf('认证失败') >= 0 || m.indexOf('Unauthorized') >= 0) {
+    return { category: 'auth', short: '认证失败，请检查 Token', detail: m };
+  }
+  if (m.indexOf('403') >= 0 || m.indexOf('Forbidden') >= 0) {
+    return { category: 'forbidden', short: '权限不足或请求被阻止', detail: m };
+  }
+  if (m.indexOf('Failed to fetch') >= 0 || m.indexOf('NetworkError') >= 0 || m.indexOf('网络错误') >= 0) {
+    return { category: 'network', short: '网络错误，请检查代理和网络连接', detail: m };
+  }
+  return { category: 'other', short: '请求失败', detail: m };
+}
+
+function formatStageName(stage) {
+  var map = {
+    'comments': 'Comments',
+    'review_comments': 'Review Comments',
+    'reviews': 'Reviews',
+    '获取 PR 列表': 'PR 列表',
+    '搜索 PR 中': 'PR 搜索',
+    '获取 PR 详情': 'PR 详情'
+  };
+  return map[stage] || (stage || '请求');
+}
+
 // Simple concurrency limiter
 function createLimiter(concurrency, delayMs) {
   var active = 0, queue = [];
@@ -723,6 +817,18 @@ function createLimiter(concurrency, delayMs) {
     });
   };
 }
+
+var ProviderRequestBudget = {
+  limits: { github: 8, gitcode: 16 },
+  _limiters: {},
+
+  schedule: function(platform, fn) {
+    if (!this._limiters[platform]) {
+      this._limiters[platform] = createLimiter(this.limits[platform], 0);
+    }
+    return this._limiters[platform](fn);
+  }
+};
 
 
 // ========== Storage ==========
@@ -762,6 +868,239 @@ var Storage = {
   saveUsers: function(users) {
     if (!this.isAvailable()) return;
     localStorage.setItem(this.USERS_KEY, JSON.stringify(users));
+  }
+};
+
+var CACHE_SCHEMA_VERSION = 1;
+
+function prCacheKey(platform, repository, prNumber) {
+  return String(platform || '') + ':' + String(repository || '').toLowerCase() + '#' + String(prNumber);
+}
+
+function cloneCacheValue(value) {
+  if (value == null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+var CacheStore = {
+  DB_NAME: 'code-statistics.pr-cache.v1',
+  STORE_NAME: 'prs',
+  _backend: null,
+  _backendPromise: null,
+  mode: '',
+  degradedReason: '',
+
+  createMemoryBackend: function() {
+    var entries = {};
+    return {
+      mode: 'memory',
+      get: async function(key) {
+        return Object.prototype.hasOwnProperty.call(entries, key) ? cloneCacheValue(entries[key]) : null;
+      },
+      put: async function(key, value) {
+        entries[key] = cloneCacheValue(value);
+      },
+      delete: async function(key) {
+        delete entries[key];
+      },
+      clear: async function() {
+        entries = {};
+      },
+      close: function() {}
+    };
+  },
+
+  openIndexedDbBackend: function(dbName) {
+    var self = this;
+    return new Promise(function(resolve, reject) {
+      var request;
+      try {
+        request = indexedDB.open(dbName || self.DB_NAME, 1);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      request.onupgradeneeded = function() {
+        var db = request.result;
+        if (!db.objectStoreNames.contains(self.STORE_NAME)) {
+          db.createObjectStore(self.STORE_NAME);
+        }
+      };
+      request.onerror = function() {
+        reject(request.error || new Error('IndexedDB 打开失败'));
+      };
+      request.onblocked = function() {
+        reject(new Error('IndexedDB 被其他页面占用'));
+      };
+      request.onsuccess = function() {
+        var db = request.result;
+        function transact(mode, action) {
+          return new Promise(function(resolveTx, rejectTx) {
+            var tx;
+            try {
+              tx = db.transaction(self.STORE_NAME, mode);
+              action(tx.objectStore(self.STORE_NAME), resolveTx, rejectTx, tx);
+            } catch (err) {
+              rejectTx(err);
+              return;
+            }
+            tx.onerror = function() {
+              rejectTx(tx.error || new Error('IndexedDB 事务失败'));
+            };
+            tx.onabort = function() {
+              rejectTx(tx.error || new Error('IndexedDB 事务已取消'));
+            };
+          });
+        }
+        resolve({
+          mode: 'indexeddb',
+          get: function(key) {
+            return transact('readonly', function(store, resolveTx, rejectTx) {
+              var getRequest = store.get(key);
+              getRequest.onsuccess = function() {
+                resolveTx(getRequest.result == null ? null : cloneCacheValue(getRequest.result));
+              };
+              getRequest.onerror = function() {
+                rejectTx(getRequest.error || new Error('IndexedDB 读取失败'));
+              };
+            });
+          },
+          put: function(key, value) {
+            return transact('readwrite', function(store, resolveTx, rejectTx, tx) {
+              var putRequest = store.put(cloneCacheValue(value), key);
+              putRequest.onerror = function() {
+                rejectTx(putRequest.error || new Error('IndexedDB 写入失败'));
+              };
+              tx.oncomplete = function() { resolveTx(); };
+            });
+          },
+          delete: function(key) {
+            return transact('readwrite', function(store, resolveTx, rejectTx, tx) {
+              var deleteRequest = store.delete(key);
+              deleteRequest.onerror = function() {
+                rejectTx(deleteRequest.error || new Error('IndexedDB 删除失败'));
+              };
+              tx.oncomplete = function() { resolveTx(); };
+            });
+          },
+          clear: function() {
+            return transact('readwrite', function(store, resolveTx, rejectTx, tx) {
+              var clearRequest = store.clear();
+              clearRequest.onerror = function() {
+                rejectTx(clearRequest.error || new Error('IndexedDB 清理失败'));
+              };
+              tx.oncomplete = function() { resolveTx(); };
+            });
+          },
+          close: function() {
+            db.close();
+          }
+        });
+      };
+    });
+  },
+
+  deleteIndexedDb: function(dbName) {
+    return new Promise(function(resolve, reject) {
+      var request = indexedDB.deleteDatabase(dbName);
+      request.onsuccess = function() { resolve(); };
+      request.onerror = function() { reject(request.error || new Error('IndexedDB 删除失败')); };
+      request.onblocked = function() { reject(new Error('IndexedDB 删除被阻塞')); };
+    });
+  },
+
+  create: function(backend) {
+    var store = Object.create(this);
+    store._backend = backend;
+    store._backendPromise = Promise.resolve(backend);
+    store.mode = backend.mode;
+    store.degradedReason = '';
+    return store;
+  },
+
+  _getBackend: function() {
+    var self = this;
+    if (this._backend) return Promise.resolve(this._backend);
+    if (this._backendPromise) return this._backendPromise;
+    if ((location.protocol === 'http:' || location.protocol === 'https:') && typeof indexedDB !== 'undefined') {
+      this._backendPromise = this.openIndexedDbBackend(this.DB_NAME)
+        .catch(function(err) {
+          self.degradedReason = err && err.message ? err.message : 'IndexedDB 不可用';
+          return self.createMemoryBackend();
+        })
+        .then(function(backend) {
+          self._backend = backend;
+          self.mode = backend.mode;
+          return backend;
+        });
+    } else {
+      this._backend = this.createMemoryBackend();
+      this.mode = this._backend.mode;
+      this._backendPromise = Promise.resolve(this._backend);
+    }
+    return this._backendPromise;
+  },
+
+  _isValidEntry: function(entry) {
+    if (!entry || entry.schemaVersion !== CACHE_SCHEMA_VERSION) return false;
+    if (!entry.platform || !entry.repository || entry.prNumber == null) return false;
+    if (!entry.core || !Array.isArray(entry.activities)) return false;
+    if (entry.completeness !== 'full' || entry.core.completeness !== 'full') return false;
+    if (entry.core.platform !== entry.platform) return false;
+    if (String(entry.core.repo || '').toLowerCase() !== String(entry.repository).toLowerCase()) return false;
+    if (String(entry.core.number) !== String(entry.prNumber)) return false;
+    if (!entry.core.baseBranch) return false;
+    if (!entry.core.mergedAt || isNaN(new Date(entry.core.mergedAt).getTime())) return false;
+    return entry.activities.every(function(activity) {
+      return activity && activity.completeness === 'full' &&
+        activity.platform === entry.platform &&
+        String(activity.repository || '').toLowerCase() === String(entry.repository).toLowerCase() &&
+        String(activity.pr_number) === String(entry.prNumber);
+    });
+  },
+
+  _sanitizeEntry: function(entry) {
+    var clean = cloneCacheValue(entry);
+    clean.schemaVersion = CACHE_SCHEMA_VERSION;
+    clean.cachedAt = clean.cachedAt || new Date().toISOString();
+    clean.activities.forEach(function(activity) {
+      delete activity.user_key;
+      delete activity.display_name;
+      delete activity.matched;
+    });
+    return clean;
+  },
+
+  get: async function(platform, repository, prNumber) {
+    var backend = await this._getBackend();
+    var key = prCacheKey(platform, repository, prNumber);
+    var entry;
+    try {
+      entry = await backend.get(key);
+    } catch (err) {
+      this.degradedReason = err && err.message ? err.message : '缓存读取失败';
+      return null;
+    }
+    if (!this._isValidEntry(entry)) {
+      if (entry != null) {
+        try { await backend.delete(key); } catch (err) {}
+      }
+      return null;
+    }
+    return cloneCacheValue(entry);
+  },
+
+  put: async function(entry) {
+    if (!this._isValidEntry(entry)) return false;
+    var clean = this._sanitizeEntry(entry);
+    var backend = await this._getBackend();
+    try {
+      await backend.put(prCacheKey(clean.platform, clean.repository, clean.prNumber), clean);
+      return true;
+    } catch (err) {
+      this.degradedReason = err && err.message ? err.message : '缓存写入失败';
+      return false;
+    }
   }
 };
 
@@ -847,7 +1186,11 @@ var GitHubProvider = {
   },
 
   _fetch: async function(url, token, signal) {
-    var resp = await fetch(url, { headers: this._headers(token), signal: signal });
+    var self = this;
+    var request = function() {
+      return fetch(url, { headers: self._headers(token), signal: signal });
+    };
+    var resp = await ProviderRequestBudget.schedule('github', request);
     if (resp.status === 403 || resp.status === 429) {
       var remaining = resp.headers.get('X-RateLimit-Remaining');
       var resetAt = resp.headers.get('X-RateLimit-Reset');
@@ -855,7 +1198,7 @@ var GitHubProvider = {
         var waitMs = Math.max(0, (parseInt(resetAt) * 1000) - Date.now()) + 1000;
         if (waitMs > 120000) throw new Error('GitHub 限流，需等待超过 2 分钟，请稍后重试');
         await sleep(waitMs);
-        resp = await fetch(url, { headers: this._headers(token), signal: signal });
+        resp = await ProviderRequestBudget.schedule('github', request);
       }
     }
     if (!resp.ok) {
@@ -881,7 +1224,7 @@ var GitHubProvider = {
    * Uses search API, handles 1000 limit.
    * Returns { prs: [...], partial: boolean }
    */
-  fetchMergedPRs: async function(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress) {
+  fetchMergedPRs: async function(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress, cacheStore) {
     var range = dateRangeToTimestamps(startDate, endDate);
     // Use search API: merged date qualifier uses YYYY-MM-DD (UTC-ish)
     // Expand window by 1 day on each side to catch timezone edge cases
@@ -913,54 +1256,87 @@ var GitHubProvider = {
       else partialReason = '搜索结果不完整';
     }
 
-    // Fetch PR details with concurrency control
-    var limiter = createLimiter(5, 100);
-    var prs = [], detailDone = 0;
+    // Resolve each candidate from cache before fetching its PR detail.
+    var prs = [], detailDone = 0, cacheHits = 0, networkPRs = 0;
     var self = this;
     var detailPromises = allItems.map(function(item) {
-      return limiter(function() {
-        return self._fetch(self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + item.number, token, signal);
-      }).then(function(detail) {
+      return (async function() {
+        var cached = null;
+        if (cacheStore) {
+          cached = await cacheStore.get('github', owner + '/' + repo, item.number);
+        }
+        if (cached) {
+          var cachedCore = cloneCacheValue(cached.core);
+          var cachedMergedAt = cachedCore.mergedAt ? new Date(cachedCore.mergedAt) : null;
+          if (cachedMergedAt && cachedMergedAt >= range.start && cachedMergedAt < range.end &&
+              cachedCore.baseBranch === defaultBranch) {
+            cachedCore._cacheHit = true;
+            cachedCore._cachedActivities = cloneCacheValue(cached.activities);
+            prs.push(cachedCore);
+            cacheHits++;
+          }
+          return;
+        }
+
+        try {
+          var detail = await self._fetch(
+            self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + item.number,
+            token, signal
+          );
+          // Filter: default branch + exact time range
+          var mergedAt = detail.merged_at ? new Date(detail.merged_at) : null;
+          if (!mergedAt) return;
+          if (mergedAt < range.start || mergedAt >= range.end) return;
+          if (detail.base && detail.base.ref !== defaultBranch) return;
+          // FCR-5: validate all three metrics; mark partial if any are unparsable
+          var ghAdd = parseInt(detail.additions, 10);
+          var ghDel = parseInt(detail.deletions, 10);
+          var ghFiles = parseInt(detail.changed_files, 10);
+          var ghUnparsable = isNaN(ghAdd) || isNaN(ghDel) || isNaN(ghFiles);
+          networkPRs++;
+          prs.push({
+            platform: 'github',
+            repo: owner + '/' + repo,
+            number: detail.number,
+            title: detail.title || '',
+            author: detail.user ? detail.user.login : '',
+            mergedAt: detail.merged_at,
+            baseBranch: detail.base ? detail.base.ref : '',
+            additions: isNaN(ghAdd) ? 0 : ghAdd,
+            deletions: isNaN(ghDel) ? 0 : ghDel,
+            changedFiles: isNaN(ghFiles) ? 0 : ghFiles,
+            completeness: ghUnparsable ? 'partial' : 'full',
+            url: 'https://github.com/' + owner + '/' + repo + '/pull/' + detail.number
+          });
+        } catch (err) {
+          // Record failed PR
+          networkPRs++;
+          prs.push({
+            platform: 'github', repo: owner + '/' + repo, number: item.number,
+            title: '',
+            author: '', mergedAt: '', baseBranch: '', additions: 0, deletions: 0, changedFiles: 0,
+            completeness: 'failed', url: 'https://github.com/' + owner + '/' + repo + '/pull/' + item.number
+          });
+        }
+      }()).finally(function() {
         detailDone++;
         if (onProgress) onProgress('获取 PR 详情', detailDone, allItems.length);
-        // Filter: default branch + exact time range
-        var mergedAt = detail.merged_at ? new Date(detail.merged_at) : null;
-        if (!mergedAt) return;
-        if (mergedAt < range.start || mergedAt >= range.end) return;
-        if (detail.base && detail.base.ref !== defaultBranch) return;
-        // FCR-5: validate all three metrics; mark partial if any are unparsable
-        var ghAdd = parseInt(detail.additions, 10);
-        var ghDel = parseInt(detail.deletions, 10);
-        var ghFiles = parseInt(detail.changed_files, 10);
-        var ghUnparsable = isNaN(ghAdd) || isNaN(ghDel) || isNaN(ghFiles);
-        prs.push({
-          platform: 'github',
-          repo: owner + '/' + repo,
-          number: detail.number,
-          title: detail.title || '',
-          author: detail.user ? detail.user.login : '',
-          mergedAt: detail.merged_at,
-          baseBranch: detail.base ? detail.base.ref : '',
-          additions: isNaN(ghAdd) ? 0 : ghAdd,
-          deletions: isNaN(ghDel) ? 0 : ghDel,
-          changedFiles: isNaN(ghFiles) ? 0 : ghFiles,
-          completeness: ghUnparsable ? 'partial' : 'full',
-          url: 'https://github.com/' + owner + '/' + repo + '/pull/' + detail.number
-        });
-      }).catch(function(err) {
-        detailDone++;
-        if (onProgress) onProgress('获取 PR 详情', detailDone, allItems.length);
-        // Record failed PR
-        prs.push({
-          platform: 'github', repo: owner + '/' + repo, number: item.number,
-          title: '',
-          author: '', mergedAt: '', baseBranch: '', additions: 0, deletions: 0, changedFiles: 0,
-          completeness: 'failed', url: 'https://github.com/' + owner + '/' + repo + '/pull/' + item.number
-        });
       });
     });
     await Promise.all(detailPromises);
-    return { prs: prs, partial: partial, partialReason: partialReason };
+    var incompletePRCount = prs.filter(function(pr) { return pr.completeness !== 'full'; }).length;
+    if (incompletePRCount > 0) {
+      partial = true;
+      partialReason = (partialReason ? partialReason + '; ' : '') +
+        incompletePRCount + ' 个 PR 代码量不完整';
+    }
+    return {
+      prs: prs,
+      partial: partial,
+      partialReason: partialReason,
+      cacheHits: cacheHits,
+      networkPRs: networkPRs
+    };
   },
 
   /**
@@ -1138,16 +1514,37 @@ var GitCodeProvider = {
   },
 
   _fetch: async function(url, token, signal) {
-    var resp = await fetch(url, { headers: this._headers(token), signal: signal });
-    if (resp.status === 403 || resp.status === 429) {
-      throw new Error('GitCode API 限流 (' + resp.status + ')，请稍后重试');
+    var self = this;
+    var attempt = 0;
+    var resp;
+    while (attempt < 3) {
+      attempt++;
+      resp = await ProviderRequestBudget.schedule('gitcode', function() {
+        return fetch(url, { headers: self._headers(token), signal: signal });
+      });
+      var isRateLimit = resp.status === 429;
+      if (resp.status === 403) {
+        var bodyText = '';
+        try { bodyText = await resp.clone().text(); } catch(e) {}
+        isRateLimit = /rate|limit|限流|too many|too_many/i.test(bodyText);
+      }
+      if (isRateLimit) {
+        var retryAfter = resp.headers.get('Retry-After');
+        var resetAt = resp.headers.get('X-RateLimit-Reset');
+        var waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 :
+          (resetAt ? Math.max(0, parseInt(resetAt, 10) * 1000 - Date.now()) + 1000 : 5000);
+        if (waitMs > 120000) break;
+        await sleep(waitMs);
+        continue;
+      }
+      if (!resp.ok) {
+        var errBody = '';
+        try { var j = await resp.json(); errBody = j.message || j.error || ''; } catch(e) {}
+        throw new Error('GitCode API ' + resp.status + (errBody ? ': ' + errBody : ''));
+      }
+      return resp.json();
     }
-    if (!resp.ok) {
-      var errBody = '';
-      try { var j = await resp.json(); errBody = j.message || j.error || ''; } catch(e) {}
-      throw new Error('GitCode API ' + resp.status + (errBody ? ': ' + errBody : ''));
-    }
-    return resp.json();
+    throw new Error('GitCode API 限流（' + (resp && resp.status || '?') + '），多次重试后仍被限流，请稍后重试');
   },
 
   testConnection: async function(token) {
@@ -1164,7 +1561,7 @@ var GitCodeProvider = {
    * Fetch merged PRs for a repo in date range.
    * Uses list API with base filter + local merged_at check.
    */
-  fetchMergedPRs: async function(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress) {
+  fetchMergedPRs: async function(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress, cacheStore) {
     var range = dateRangeToTimestamps(startDate, endDate);
     var allPRs = [], page = 1;
 
@@ -1189,45 +1586,67 @@ var GitCodeProvider = {
       return t >= range.start && t < range.end;
     });
 
-    // Get stats for each PR
-    var limiter = createLimiter(5, 100);
-    var prs = [], detailDone = 0;
+    // Resolve each PR from cache before fetching code statistics.
+    var prs = [], detailDone = 0, cacheHits = 0, networkPRs = 0;
     var self = this;
     var detailPromises = inRange.map(function(pr) {
-      return limiter(function() {
-        return self._getPRStats(token, owner, repo, pr.number, signal);
-      }).then(function(stats) {
+      return (async function() {
+        var cached = null;
+        if (cacheStore) {
+          cached = await cacheStore.get('gitcode', owner + '/' + repo, pr.number);
+        }
+        if (cached) {
+          var cachedCore = cloneCacheValue(cached.core);
+          cachedCore._cacheHit = true;
+          cachedCore._cachedActivities = cloneCacheValue(cached.activities);
+          prs.push(cachedCore);
+          cacheHits++;
+          return;
+        }
+
+        networkPRs++;
+        try {
+          var stats = await self._getPRStats(token, owner, repo, pr.number, signal);
+          prs.push({
+            platform: 'gitcode',
+            repo: owner + '/' + repo,
+            number: pr.number,
+            title: pr.title || '',
+            author: pr.user ? pr.user.login : (pr.author ? pr.author.login : ''),
+            mergedAt: pr.merged_at,
+            baseBranch: pr.base ? pr.base.ref : defaultBranch,
+            additions: stats.additions,
+            deletions: stats.deletions,
+            changedFiles: stats.changedFiles,
+            completeness: stats.completeness,
+            url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
+          });
+        } catch (err) {
+          prs.push({
+            platform: 'gitcode', repo: owner + '/' + repo, number: pr.number,
+            title: pr.title || '',
+            author: pr.user ? pr.user.login : '', mergedAt: pr.merged_at,
+            baseBranch: defaultBranch, additions: 0, deletions: 0, changedFiles: 0,
+            completeness: 'failed',
+            url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
+          });
+        }
+      }()).finally(function() {
         detailDone++;
         if (onProgress) onProgress('获取 PR 详情', detailDone, inRange.length);
-        prs.push({
-          platform: 'gitcode',
-          repo: owner + '/' + repo,
-          number: pr.number,
-          title: pr.title || '',
-          author: pr.user ? pr.user.login : (pr.author ? pr.author.login : ''),
-          mergedAt: pr.merged_at,
-          baseBranch: pr.base ? pr.base.ref : defaultBranch,
-          additions: stats.additions,
-          deletions: stats.deletions,
-          changedFiles: stats.changedFiles,
-          completeness: stats.completeness,
-          url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
-        });
-      }).catch(function(err) {
-        detailDone++;
-        if (onProgress) onProgress('获取 PR 详情', detailDone, inRange.length);
-        prs.push({
-          platform: 'gitcode', repo: owner + '/' + repo, number: pr.number,
-          title: pr.title || '',
-          author: pr.user ? pr.user.login : '', mergedAt: pr.merged_at,
-          baseBranch: defaultBranch, additions: 0, deletions: 0, changedFiles: 0,
-          completeness: 'failed',
-          url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
-        });
       });
     });
     await Promise.all(detailPromises);
-    return { prs: prs, partial: false };
+    var incompletePRCount = prs.filter(function(resultPr) {
+      return resultPr.completeness !== 'full';
+    }).length;
+    return {
+      prs: prs,
+      partial: incompletePRCount > 0,
+      partialReason: incompletePRCount > 0 ? incompletePRCount + ' 个 PR 代码量不完整' : '',
+      cacheHits: cacheHits,
+      networkPRs: networkPRs
+    };
   },
 
   /** Get PR code stats: try detail fields first, then files endpoint */
@@ -1556,6 +1975,164 @@ function collectFilters() {
   };
 }
 
+function createPRCacheEntry(pr, activities) {
+  return {
+    schemaVersion: CACHE_SCHEMA_VERSION,
+    cachedAt: new Date().toISOString(),
+    platform: pr.platform,
+    repository: pr.repo,
+    prNumber: pr.number,
+    core: {
+      platform: pr.platform,
+      repo: pr.repo,
+      number: pr.number,
+      title: pr.title || '',
+      author: pr.author || '',
+      mergedAt: pr.mergedAt || '',
+      baseBranch: pr.baseBranch || '',
+      additions: pr.additions || 0,
+      deletions: pr.deletions || 0,
+      changedFiles: pr.changedFiles || 0,
+      completeness: pr.completeness,
+      url: pr.url || ''
+    },
+    activities: cloneCacheValue(activities || []),
+    completeness: pr.completeness,
+    partialReason: pr.partialReason || ''
+  };
+}
+
+async function fetchCollaborationForPR(task, signal, cacheStore, onProgress) {
+  var pr = task.pr;
+  if (pr._cacheHit) {
+    return {
+      activities: cloneCacheValue(pr._cachedActivities || []),
+      partial: false,
+      partialReason: '',
+      cacheHit: true
+    };
+  }
+
+  var collab = await task.provider.fetchCollaboration(
+    task.token,
+    task.r.owner,
+    task.r.repo,
+    pr,
+    signal,
+    onProgress
+  );
+  collab.cacheHit = false;
+
+  var activities = collab.activities || [];
+  var isFull = !collab.partial && pr.completeness === 'full' &&
+    activities.every(function(activity) { return activity.completeness === 'full'; });
+  if (isFull && cacheStore) {
+    await cacheStore.put(createPRCacheEntry(pr, activities));
+  }
+  return collab;
+}
+
+function createQueryProgress(total) {
+  var completed = 0;
+  var cacheHits = 0;
+  var networkPRs = 0;
+  var settled = {};
+  return {
+    settle: function(id, source) {
+      if (settled[id]) return false;
+      settled[id] = true;
+      completed++;
+      if (source === 'cache') cacheHits++;
+      else networkPRs++;
+      return true;
+    },
+    snapshot: function() {
+      return {
+        total: total,
+        completed: completed,
+        cacheHits: cacheHits,
+        networkPRs: networkPRs
+      };
+    }
+  };
+}
+
+function formatQueryTerminal(progress, repoStatuses, aborted) {
+  if (aborted) return '查询已取消';
+  var hasFailed = repoStatuses.some(function(rs) { return rs.status === 'failed'; });
+  var hasPartial = repoStatuses.some(function(rs) { return rs.status === 'partial'; });
+  var prefix = hasFailed ? '查询完成（有失败）' : (hasPartial ? '查询完成（部分）' : '查询完成');
+  return prefix + ' · ' + progress.completed + ' 个 PR（缓存 ' + progress.cacheHits +
+    ' · 网络 ' + progress.networkPRs + '）· ' + repoStatuses.length + ' 个仓库';
+}
+
+function formatRepoTerminal(repoStatus) {
+  var r = repoStatus.repo;
+  var prefix = r.platform + ': ' + r.owner + '/' + r.repo + ' — ';
+  if (repoStatus.status === 'failed') {
+    return { icon: '❌', text: prefix + '失败：' + (repoStatus.error || '未知错误') };
+  }
+  if (repoStatus.status === 'cancelled') {
+    return { icon: '⏸', text: prefix + '已取消' };
+  }
+  var total = repoStatus.totalPRs || 0;
+  var completed = repoStatus.completedPRs == null ? total : repoStatus.completedPRs;
+  var text = prefix + completed + '/' + total + ' PR（缓存 ' + (repoStatus.cacheHits || 0) +
+    ' · 网络 ' + (repoStatus.networkPRs || 0) + '）';
+  if (repoStatus.status === 'partial') {
+    text += ' · 部分：' + (repoStatus.partialReason || '结果可能不完整');
+    return { icon: '⚠️', text: text };
+  }
+  return { icon: '✅', text: text };
+}
+
+function formatRepoTerminalDisplay(repoStatus) {
+  if (repoStatus.status === 'failed') {
+    var r = repoStatus.repo;
+    return { icon: '❌', text: r.platform + ': ' + r.owner + '/' + r.repo + ' — 失败' };
+  }
+  return formatRepoTerminal(repoStatus);
+}
+
+function renderErrorSummary(repoStatuses) {
+  var failed = repoStatuses.filter(function(rs) { return rs.status === 'failed'; });
+  if (failed.length === 0) return null;
+  var groups = {};
+  failed.forEach(function(rs) {
+    var ec = rs.errorCategory || classifyError(rs.error);
+    if (!groups[ec.category]) groups[ec.category] = { cat: ec, repos: [] };
+    groups[ec.category].repos.push(rs);
+  });
+  var container = document.createElement('div');
+  container.className = 'error-summary';
+  var parts = [];
+  for (var k in groups) { parts.push(groups[k].cat.short + ' ' + groups[k].repos.length + ' 个'); }
+  var details = document.createElement('details');
+  var summary = document.createElement('summary');
+  summary.className = 'error-summary-title';
+  summary.textContent = '共 ' + failed.length + ' 个仓库失败：' + parts.join('，') + '（点击展开详情）';
+  details.appendChild(summary);
+  var ul = document.createElement('ul');
+  failed.forEach(function(rs) {
+    var li = document.createElement('li');
+    var stage = formatStageName(rs.failedStage || rs.currentStage || 'PR 列表');
+    var ec = rs.errorCategory || classifyError(rs.error);
+    var line = document.createElement('div');
+    line.className = 'error-detail-line';
+    line.textContent = rs.repo.platform + ': ' + rs.repo.owner + '/' + rs.repo.repo +
+      ' — ' + stage + ' — ' + ec.short;
+    var full = document.createElement('pre');
+    full.className = 'error-detail-full';
+    full.textContent = rs.error || '未知错误';
+    li.appendChild(line);
+    li.appendChild(full);
+    ul.appendChild(li);
+  });
+  details.appendChild(ul);
+  container.appendChild(details);
+  return container;
+}
+
 async function runQuery() {
   var startDate = document.getElementById('stat-start').value;
   var endDate = document.getElementById('stat-end').value;
@@ -1590,15 +2167,14 @@ async function runQuery() {
     var li = document.createElement('li');
     li.innerHTML = '<span class="icon">⏳</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 等待中</span>';
     progressList.appendChild(li);
-    return { repo: r, li: li, status: 'pending', error: null };
+    return { repo: r, li: li, status: 'pending', error: null, currentStage: 'PR 列表' };
   });
 
-  var allPRs = [], anyPartial = false;
+  var allPRs = [];
   var completedCount = 0;
 
-  for (var i = 0; i < repoStatuses.length; i++) {
-    if (queryAbort.signal.aborted) break;
-    var rs = repoStatuses[i];
+  await Promise.all(repoStatuses.map(async function(rs) {
+    if (queryAbort.signal.aborted) return;
     var r = rs.repo;
     var token = r.platform === 'github' ? config.githubToken : config.gitcodeToken;
     var provider = r.platform === 'github' ? GitHubProvider : GitCodeProvider;
@@ -1611,20 +2187,27 @@ async function runQuery() {
       var result = await provider.fetchMergedPRs(
         token, r.owner, r.repo, defaultBranch, startDate, endDate, queryAbort.signal,
         function(stage, done, total) {
+          rs.currentStage = stage;
           var totalStr = total < 0 ? '' : ('/' + total);
           rs.li.innerHTML = '<span class="icon">⏳</span><span>' +
             escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' +
-            escapeHtml(stage) + ' (' + done + totalStr + ')</span>';
-        }
+            escapeHtml(formatStageName(stage)) + ' (' + done + totalStr + ')</span>';
+        },
+        CacheStore
       );
       // FC-2: propagate repo-level partial to each PR so it reaches summary/export
       if (result.partial) {
         result.prs.forEach(function(pr) { pr.repoPartial = true; });
       }
       allPRs = allPRs.concat(result.prs);
+      rs.totalPRs = result.prs.length;
+      rs.cacheHits = result.cacheHits || 0;
+      rs.networkPRs = result.networkPRs || 0;
       var partialNote = result.partial ? (' ⚠️ 部分统计（' + (result.partialReason || '结果可能不完整') + '）') : '';
       rs.li.innerHTML = '<span class="icon">✅</span><span>' +
-        escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + result.prs.length + ' 个已合并 PR' + partialNote + '</span>';
+        escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + result.prs.length +
+        ' 个已合并 PR（缓存 ' + rs.cacheHits + ' · 网络 ' + rs.networkPRs + '）' +
+        partialNote + '</span>';
       rs.status = result.partial ? 'partial' : 'ok';
       rs.partialReason = result.partialReason || '';
     } catch(err) {
@@ -1632,18 +2215,21 @@ async function runQuery() {
         rs.li.innerHTML = '<span class="icon">⏸</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 已取消</span>';
         rs.status = 'cancelled';
       } else {
-        rs.li.innerHTML = '<span class="icon">❌</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + escapeHtml(err.message) + '</span>';
+        var ec = classifyError(err.message);
+        rs.errorCategory = ec;
+        rs.failedStage = rs.currentStage || 'PR 列表';
+        rs.li.innerHTML = '<span class="icon">❌</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + escapeHtml(formatStageName(rs.failedStage)) + ' — 失败：' + escapeHtml(ec.short) + '</span>';
         rs.status = 'failed';
         rs.error = err.message;
       }
     }
     completedCount++;
-  }
+  }));
 
   document.getElementById('progress-title').textContent =
     queryAbort.signal.aborted ? '查询已取消' : '已获取 ' + allPRs.length + ' 个 PR，正在获取协作活动...';
 
-  // Fetch collaboration activities for each merged PR (limited concurrency)
+  // Fetch collaboration activities; actual network concurrency is provider-budgeted.
   var allActivities = [];
   allPRs.forEach(function(pr) {
     allActivities.push({
@@ -1684,49 +2270,83 @@ async function runQuery() {
   });
 
   var totalCollabTasks = collabTasks.length;
-  var processedCollab = 0;
-  var repoProgress = {};
-  var collabLimiter = createLimiter(3, 100);
+  var queryProgress = createQueryProgress(totalCollabTasks);
   var selfQueryAbort = queryAbort;
 
   var collabPromises = collabTasks.map(function(task) {
-    return collabLimiter(async function() {
+    return (async function() {
       if (selfQueryAbort && selfQueryAbort.signal.aborted) return;
       var rs = task.rs, r = task.r, pr = task.pr;
-      var repoKey = r.platform + ':' + r.owner + '/' + r.repo;
-      repoProgress[repoKey] = (repoProgress[repoKey] || 0) + 1;
-      processedCollab++;
-      document.getElementById('progress-title').textContent =
-        '正在获取协作活动... (' + processedCollab + '/' + totalCollabTasks + ' PR)';
+      var collabResult = null;
       rs.li.innerHTML = '<span class="icon">⏳</span><span>' +
         escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 协作活动 (' +
-        repoProgress[repoKey] + '/' + task.repoTotal + ' PR)</span>';
+        (rs.completedPRs || 0) + '/' + task.repoTotal + ' PR)</span>';
       try {
-        var collab = await task.provider.fetchCollaboration(
-          task.token, r.owner, r.repo, pr, selfQueryAbort.signal,
+        collabResult = await fetchCollaborationForPR(
+          task,
+          selfQueryAbort.signal,
+          CacheStore,
           function(stage, done, total) {
+            rs.currentStage = stage;
             var totalStr = total < 0 ? '' : ('/' + total);
             rs.li.innerHTML = '<span class="icon">⏳</span><span>' +
               escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' +
-              escapeHtml(stage) + ' (' + done + totalStr + ')</span>';
+              escapeHtml(formatStageName(stage)) + ' (' + done + totalStr + ')</span>';
           }
         );
-        if (collab.activities && collab.activities.length > 0) {
-          allActivities = allActivities.concat(collab.activities);
+        if (collabResult.activities && collabResult.activities.length > 0) {
+          allActivities = allActivities.concat(collabResult.activities);
         }
-        if (collab.partial) {
+        if (collabResult.partial) {
           rs.status = 'partial';
-          rs.partialReason = (rs.partialReason ? rs.partialReason + '; ' : '') + (collab.partialReason || '协作活动部分失败');
+          rs.partialReason = (rs.partialReason ? rs.partialReason + '; ' : '') +
+            (collabResult.partialReason || '协作活动部分失败');
         }
       } catch(err) {
         if (selfQueryAbort && !selfQueryAbort.signal.aborted) {
           rs.status = 'partial';
-          rs.partialReason = (rs.partialReason ? rs.partialReason + '; ' : '') + '协作活动获取异常';
+          rs.partialReason = (rs.partialReason ? rs.partialReason + '; ' : '') +
+            '协作活动获取异常' + (err && err.message ? '：' + err.message : '');
+        }
+      } finally {
+        if (!(selfQueryAbort && selfQueryAbort.signal.aborted)) {
+          queryProgress.settle(
+            prCacheKey(pr.platform, pr.repo, pr.number),
+            collabResult && collabResult.cacheHit ? 'cache' : 'network'
+          );
+          rs.completedPRs = (rs.completedPRs || 0) + 1;
+          var liveProgress = queryProgress.snapshot();
+          document.getElementById('progress-title').textContent =
+            '正在获取协作活动... (' + liveProgress.completed + '/' + liveProgress.total + ' PR)';
+          rs.li.innerHTML = '<span class="icon">⏳</span><span>' +
+            escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 协作活动 (' +
+            rs.completedPRs + '/' + task.repoTotal + ' PR)</span>';
         }
       }
-    });
+    }());
   });
   await Promise.all(collabPromises);
+
+  var wasAborted = !!(selfQueryAbort && selfQueryAbort.signal.aborted);
+  if (wasAborted) {
+    repoStatuses.forEach(function(rs) {
+      if (rs.status !== 'failed') rs.status = 'cancelled';
+    });
+  }
+  repoStatuses.forEach(function(rs) {
+    var terminal = formatRepoTerminalDisplay(rs);
+    rs.li.innerHTML = '<span class="icon">' + terminal.icon + '</span><span>' +
+      escapeHtml(terminal.text) + '</span>';
+  });
+  document.getElementById('progress-title').textContent =
+    formatQueryTerminal(queryProgress.snapshot(), repoStatuses, wasAborted);
+
+  // Aggregated, collapsible error summary
+  var progressBox = document.querySelector('.progress-box');
+  var existingSummary = progressBox && progressBox.querySelector('.error-summary');
+  if (existingSummary) existingSummary.remove();
+  var errorSummary = renderErrorSummary(repoStatuses);
+  if (errorSummary && progressBox) progressBox.appendChild(errorSummary);
 
   // Propagate repo-level partial status to all activities of that repo
   var repoPartialMap = {};
@@ -1786,10 +2406,17 @@ function renderResults(filters) {
     return true; // 'all'
   });
 
-  // Sort: platform, userKey, repo
-  visibleSummary.sort(function(a, b) {
-    return (a.platform + a.userKey + a.repo).localeCompare(b.platform + b.userKey + b.repo);
-  });
+  // Render sortable summary header
+  document.getElementById('summary-thead').innerHTML = renderSortableHeader(SUMMARY_COLUMNS, summarySort, 'sortSummary');
+
+  // Apply user-selected sort (or default platform/user/repo sort)
+  if (summarySort.column == null) {
+    visibleSummary.sort(function(a, b) {
+      return (a.platform + a.userKey + a.repo).localeCompare(b.platform + b.userKey + b.repo);
+    });
+  } else {
+    visibleSummary = applySort(visibleSummary, summarySort, SUMMARY_COLUMNS);
+  }
   activities.sort(function(a, b) {
     if (a.repository !== b.repository) return a.repository.localeCompare(b.repository);
     return (a.merged_at || '').localeCompare(b.merged_at || '');
@@ -1868,6 +2495,126 @@ function renderResults(filters) {
 var selectedSummaryRow = null;
 var currentDetailTab = 'development';
 
+/** Table sort state */
+var summarySort = { column: null, direction: 'asc' };
+var detailSort = { development: null, comments: null, approvals: null };
+
+var SUMMARY_COLUMNS = [
+  { label: '平台', key: 'platform', sortable: false, type: 'string' },
+  { label: '用户', key: 'userKey', sortable: false, type: 'string' },
+  { label: '显示名', key: 'displayName', sortable: false, type: 'string' },
+  { label: '仓库', key: 'repo', sortable: false, type: 'string' },
+  { label: '开发 PR', key: 'prCount', type: 'number' },
+  { label: 'Comments', key: 'commentCount', type: 'number' },
+  { label: 'Approve', key: 'approveCount', type: 'number' },
+  { label: '新增行', key: 'additions', type: 'number' },
+  { label: '删除行', key: 'deletions', type: 'number' },
+  { label: '变更行', type: 'computed', fn: function(r) { return r.additions + r.deletions; } },
+  { label: '净增行', type: 'computed', fn: function(r) { return r.additions - r.deletions; } },
+  { label: '变更文件数', key: 'changedFiles', type: 'number' },
+  { label: '完整性', type: 'computed', sortable: false, fn: function(r) { return StatsEngine.completenessLabel(r); } }
+];
+
+var DETAIL_COLUMNS = {
+  development: [
+    { label: '平台', key: 'platform', sortable: false, type: 'string' },
+    { label: '仓库', key: 'repository', sortable: false, type: 'string' },
+    { label: 'PR', key: 'pr_number', sortable: false, type: 'number' },
+    { label: '标题', key: 'pr_title', sortable: false, type: 'string' },
+    { label: '合并时间', key: 'merged_at', type: 'date' },
+    { label: '新增行', key: 'additions', type: 'number' },
+    { label: '删除行', key: 'deletions', type: 'number' },
+    { label: '变更文件数', key: 'changed_files', type: 'number' },
+    { label: '链接', sortable: false },
+    { label: '完整性', key: 'completeness', sortable: false, type: 'string' }
+  ],
+  comments: [
+    { label: '平台', key: 'platform', sortable: false, type: 'string' },
+    { label: '仓库', key: 'repository', sortable: false, type: 'string' },
+    { label: 'PR', key: 'pr_number', sortable: false, type: 'number' },
+    { label: '评论类型', key: 'source_type', type: 'string' },
+    { label: '活动时间', key: 'event_at', type: 'date' },
+    { label: '内容摘要', key: 'body_summary', type: 'string' },
+    { label: '链接', sortable: false },
+    { label: '完整性', key: 'completeness', sortable: false, type: 'string' }
+  ],
+  approvals: [
+    { label: '平台', key: 'platform', sortable: false, type: 'string' },
+    { label: '仓库', key: 'repository', sortable: false, type: 'string' },
+    { label: 'PR', key: 'pr_number', sortable: false, type: 'number' },
+    { label: '标题', key: 'pr_title', sortable: false, type: 'string' },
+    { label: '审核时间', key: 'event_at', type: 'date' },
+    { label: '当前状态', key: 'state', type: 'string' },
+    { label: '链接', sortable: false },
+    { label: '完整性', key: 'completeness', sortable: false, type: 'string' }
+  ]
+};
+
+function getSortValue(item, col) {
+  if (col.fn) return col.fn(item);
+  if (col.key) return item[col.key];
+  return '';
+}
+
+function compareSortValues(a, b, type) {
+  if (type === 'number') {
+    var na = a == null ? 0 : Number(a);
+    var nb = b == null ? 0 : Number(b);
+    return na - nb;
+  }
+  return String(a == null ? '' : a).localeCompare(String(b == null ? '' : b));
+}
+
+function applySort(rows, sort, columns) {
+  if (sort == null || sort.column == null || !columns[sort.column] || columns[sort.column].sortable === false) return rows;
+  var col = columns[sort.column];
+  var mult = sort.direction === 'asc' ? 1 : -1;
+  return rows.slice().sort(function(a, b) {
+    var va = getSortValue(a, col);
+    var vb = getSortValue(b, col);
+    return compareSortValues(va, vb, col.type) * mult;
+  });
+}
+
+function renderSortableHeader(columns, sort, clickHandlerPrefix) {
+  var html = '<tr>';
+  columns.forEach(function(col, idx) {
+    if (col.sortable === false) {
+      html += '<th>' + escapeHtml(col.label) + '</th>';
+      return;
+    }
+    var active = sort && sort.column === idx;
+    var upActive = active && sort.direction === 'asc' ? ' active' : '';
+    var downActive = active && sort.direction === 'desc' ? ' active' : '';
+    html += '<th class="sortable" onclick="' + clickHandlerPrefix + '(' + idx + ')">' +
+      escapeHtml(col.label) +
+      '<span class="sort-arrows"><span class="sort-arrow up' + upActive + '">▲</span>' +
+      '<span class="sort-arrow down' + downActive + '">▼</span></span></th>';
+  });
+  html += '</tr>';
+  return html;
+}
+
+function sortSummary(column) {
+  if (summarySort.column === column) {
+    summarySort.direction = summarySort.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    summarySort.column = column;
+    summarySort.direction = 'asc';
+  }
+  renderResults(collectFilters());
+}
+
+function sortDetail(column) {
+  var sort = detailSort[currentDetailTab];
+  if (sort && sort.column === column) {
+    sort.direction = sort.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    detailSort[currentDetailTab] = { column: column, direction: 'asc' };
+  }
+  renderDetail();
+}
+
 /** Show detail for selected summary row */
 function selectSummaryRow(tr) {
   var wasSelected = tr.classList.contains('selected');
@@ -1938,8 +2685,9 @@ function renderDetail() {
   var dtbody = document.getElementById('detail-tbody');
 
   if (currentDetailTab === 'development') {
-    thead.innerHTML = '<tr><th>平台</th><th>仓库</th><th>PR</th><th>标题</th><th>合并时间</th><th>新增行</th><th>删除行</th><th>变更文件数</th><th>链接</th><th>完整性</th></tr>';
+    thead.innerHTML = renderSortableHeader(DETAIL_COLUMNS.development, detailSort.development, 'sortDetail');
     var devActs = detailActs.filter(function(a) { return a.activity_type === 'development'; });
+    devActs = applySort(devActs, detailSort.development, DETAIL_COLUMNS.development);
     if (devActs.length === 0) {
       dtbody.innerHTML = '<tr class="empty-row"><td colspan="10">无开发 PR</td></tr>';
       return;
@@ -1959,8 +2707,9 @@ function renderDetail() {
         '</tr>';
     }).join('');
   } else if (currentDetailTab === 'comments') {
-    thead.innerHTML = '<tr><th>平台</th><th>仓库</th><th>PR</th><th>评论类型</th><th>活动时间</th><th>内容摘要</th><th>链接</th><th>完整性</th></tr>';
+    thead.innerHTML = renderSortableHeader(DETAIL_COLUMNS.comments, detailSort.comments, 'sortDetail');
     var commentActs = detailActs.filter(function(a) { return a.activity_type === 'comment'; });
+    commentActs = applySort(commentActs, detailSort.comments, DETAIL_COLUMNS.comments);
     if (commentActs.length === 0) {
       dtbody.innerHTML = '<tr class="empty-row"><td colspan="8">无 Comments</td></tr>';
       return;
@@ -1978,8 +2727,9 @@ function renderDetail() {
         '</tr>';
     }).join('');
   } else if (currentDetailTab === 'approvals') {
-    thead.innerHTML = '<tr><th>平台</th><th>仓库</th><th>PR</th><th>标题</th><th>审核时间</th><th>当前状态</th><th>链接</th><th>完整性</th></tr>';
+    thead.innerHTML = renderSortableHeader(DETAIL_COLUMNS.approvals, detailSort.approvals, 'sortDetail');
     var approvalActs = detailActs.filter(function(a) { return a.activity_type === 'approval'; });
+    approvalActs = applySort(approvalActs, detailSort.approvals, DETAIL_COLUMNS.approvals);
     if (approvalActs.length === 0) {
       dtbody.innerHTML = '<tr class="empty-row"><td colspan="8">无审核 PR</td></tr>';
       return;
@@ -2064,16 +2814,20 @@ function persistToken(platform, token) {
   Storage.saveConfig(config);
 }
 
-function saveToken(platform) {
-  var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
-  var token = document.getElementById(inputId).value.trim();
-  persistToken(platform, token);
-  showTokenStatus(platform, 'ok', '已保存' + (token ? ' (' + maskToken(token) + ')' : ''));
+var tokenSaveTimers = {};
+function scheduleAutoSaveToken(platform) {
+  if (tokenSaveTimers[platform]) clearTimeout(tokenSaveTimers[platform]);
+  tokenSaveTimers[platform] = setTimeout(function() {
+    var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
+    var token = document.getElementById(inputId).value.trim();
+    persistToken(platform, token);
+  }, 500);
 }
 
 function clearToken(platform) {
   var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
   document.getElementById(inputId).value = '';
+  if (tokenSaveTimers[platform]) { clearTimeout(tokenSaveTimers[platform]); tokenSaveTimers[platform] = null; }
   persistToken(platform, '');
   showTokenStatus(platform, 'ok', '已清除');
 }
@@ -2096,7 +2850,8 @@ async function testConnection(platform) {
   } catch(err) {
     var msg = err.message || '连接失败';
     if (msg.indexOf('401') >= 0) msg = '认证失败，请检查 Token';
-    else if (msg.indexOf('403') >= 0 || msg.indexOf('429') >= 0) msg = '权限不足或请求限流';
+    else if (msg.indexOf('429') >= 0) msg = '请求过于频繁（429，上游限流）';
+    else if (msg.indexOf('403') >= 0) msg = '权限不足或请求被阻止';
     else if (msg.indexOf('Failed to fetch') >= 0 || msg.indexOf('NetworkError') >= 0) msg = '网络错误，请检查代理和网络连接';
     showTokenStatus(platform, 'err', msg);
   }
@@ -2117,6 +2872,13 @@ function toggleTokenVisibility(inputId) {
 
 
 // ========== User CRUD ==========
+
+function remapCurrentResultsAfterUsersChanged(users) {
+  if (!StatsEngine.currentActivities || StatsEngine.currentActivities.length === 0) return false;
+  StatsEngine.mapActivitiesToUsers(StatsEngine.currentActivities, users || Storage.loadUsers());
+  renderResults(collectFilters());
+  return true;
+}
 
 function renderUsers() {
   var users = Storage.loadUsers();
@@ -2190,6 +2952,7 @@ function saveUser(event) {
   Storage.saveUsers(users);
   closeUserDialog();
   renderUsers();
+  remapCurrentResultsAfterUsersChanged(users);
   return false;
 }
 
@@ -2198,6 +2961,8 @@ function toggleUserEnabled(index, checked) {
   if (index >= 0 && index < users.length) {
     users[index].enabled = checked;
     Storage.saveUsers(users);
+    renderUsers();
+    remapCurrentResultsAfterUsersChanged(users);
   }
 }
 
@@ -2207,6 +2972,7 @@ function deleteUser(index) {
   users.splice(index, 1);
   Storage.saveUsers(users);
   renderUsers();
+  remapCurrentResultsAfterUsersChanged(users);
 }
 
 
@@ -2360,6 +3126,7 @@ function confirmImport() {
   pendingImportRows = [];
   closeImportDialog();
   renderUsers();
+  remapCurrentResultsAfterUsersChanged(users);
 }
 
 function closeImportDialog() {

@@ -11,4 +11,4 @@ created: 2026-07-24
 
 | ID | Name | Status | Owner | Link |
 |----|------|--------|-------|------|
-| F002 | GitHub / GitCode PR 协作活动统计 | done | kimi | [F002](docs/features/F002-pr-collaboration-statistics.md) |
+| F003 | 已合入 PR 缓存与查询加速 | in-progress | sol | [F003](docs/features/F003-merged-pr-cache-performance.md) |

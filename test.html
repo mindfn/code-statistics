@@ -357,6 +357,666 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   assert(maxRunning <= 3, 'max concurrent tasks <= 3');
   assert(maxRunning === 3, 'max concurrent tasks reached 3 with 5 tasks');
 
+  // --- F003: provider-level request budgets ---
+  suite('F003 provider request budgets');
+  assert(typeof app.ProviderRequestBudget === 'object' && app.ProviderRequestBudget !== null, 'ProviderRequestBudget is exposed');
+  var originalWindowFetch = app.fetch;
+  var activeRequests = { github: 0, gitcode: 0 };
+  var maxActiveRequests = { github: 0, gitcode: 0 };
+  app.fetch = function(url) {
+    var platform = String(url).indexOf('api.github.com') >= 0 ? 'github' : 'gitcode';
+    activeRequests[platform]++;
+    maxActiveRequests[platform] = Math.max(maxActiveRequests[platform], activeRequests[platform]);
+    return new Promise(function(resolve) {
+      setTimeout(function() {
+        activeRequests[platform]--;
+        resolve({
+          ok: true,
+          status: 200,
+          headers: { get: function() { return null; } },
+          json: function() { return Promise.resolve({}); }
+        });
+      }, 15);
+    });
+  };
+  var budgetCalls = [];
+  for (var ghBudgetIndex = 0; ghBudgetIndex < 24; ghBudgetIndex++) {
+    budgetCalls.push(app.GitHubProvider._fetch('https://api.github.com/test/' + ghBudgetIndex, 'tok'));
+  }
+  for (var gcBudgetIndex = 0; gcBudgetIndex < 32; gcBudgetIndex++) {
+    budgetCalls.push(app.GitCodeProvider._fetch('https://api.gitcode.com/test/' + gcBudgetIndex, 'tok'));
+  }
+  await Promise.all(budgetCalls);
+  app.fetch = originalWindowFetch;
+  assert(maxActiveRequests.github <= 8, 'GitHub request concurrency never exceeds 8 (got ' + maxActiveRequests.github + ')');
+  assert(maxActiveRequests.github > 3, 'GitHub request concurrency can exceed old PR-task limit 3');
+  assert(maxActiveRequests.gitcode <= 16, 'GitCode request concurrency never exceeds 16 (got ' + maxActiveRequests.gitcode + ')');
+  assert(maxActiveRequests.gitcode > 3, 'GitCode request concurrency can exceed old PR-task limit 3');
+
+  suite('F003 nested collaboration fan-out request budget');
+  var fanoutActive = 0;
+  var fanoutPeak = 0;
+  app.fetch = function() {
+    fanoutActive++;
+    fanoutPeak = Math.max(fanoutPeak, fanoutActive);
+    return new Promise(function(resolve) {
+      setTimeout(function() {
+        fanoutActive--;
+        resolve({
+          ok: true,
+          status: 200,
+          headers: { get: function() { return null; } },
+          json: function() { return Promise.resolve([]); }
+        });
+      }, 15);
+    });
+  };
+  var fanoutTasks = [];
+  for (var fanoutIndex = 0; fanoutIndex < 12; fanoutIndex++) {
+    fanoutTasks.push(app.GitHubProvider.fetchCollaboration(
+      'tok', 'org', 'repo',
+      {
+        number: fanoutIndex + 1,
+        title: 'Fan-out PR ' + fanoutIndex,
+        mergedAt: '2026-07-20T00:00:00Z',
+        url: 'https://github.com/org/repo/pull/' + (fanoutIndex + 1)
+      },
+      new AbortController().signal,
+      function(){}
+    ));
+  }
+  await Promise.all(fanoutTasks);
+  app.fetch = originalWindowFetch;
+  assert(fanoutPeak <= 8, 'nested GitHub collaboration fan-out never exceeds request budget 8 (got ' + fanoutPeak + ')');
+  assert(fanoutPeak > 3, 'nested GitHub collaboration fan-out can use more than 3 requests');
+
+  // --- F003: merged PR cache contract ---
+  suite('F003 PR cache key and lifecycle');
+  assert(typeof app.prCacheKey === 'function', 'prCacheKey is exposed');
+  assert(typeof app.CacheStore === 'object' && app.CacheStore !== null, 'CacheStore is exposed');
+  if (typeof app.prCacheKey === 'function' && app.CacheStore) {
+    assertEqual(
+      app.prCacheKey('github', 'Org/Repo', 42),
+      'github:org/repo#42',
+      'cache key normalizes repository case'
+    );
+
+    var memoryBackend = app.CacheStore.createMemoryBackend();
+    var memoryCache = app.CacheStore.create(memoryBackend);
+    var fullEntry = {
+      schemaVersion: app.CACHE_SCHEMA_VERSION,
+      cachedAt: '2026-07-26T00:00:00.000Z',
+      platform: 'github',
+      repository: 'Org/Repo',
+      prNumber: 42,
+      core: {
+        platform: 'github', repo: 'Org/Repo', number: 42, author: 'alice',
+        mergedAt: '2026-07-25T00:00:00Z', baseBranch: 'main', additions: 10, deletions: 2,
+        changedFiles: 1, completeness: 'full', url: 'https://example.test/42'
+      },
+      activities: [{
+        activity_type: 'comment', platform: 'github', repository: 'Org/Repo',
+        pr_number: 42, actor_login: 'bob', user_key: 'local-bob',
+        display_name: 'Local Bob', matched: true, completeness: 'full'
+      }],
+      completeness: 'full',
+      partialReason: ''
+    };
+
+    assert(await memoryCache.put(fullEntry) === true, 'full entry is accepted');
+    var firstHit = await memoryCache.get('github', 'Org/Repo', 42);
+    assert(firstHit && firstHit.core.additions === 10, 'full current-schema entry hits');
+    assert(!('user_key' in firstHit.activities[0]), 'user_key projection is stripped before caching');
+    assert(!('display_name' in firstHit.activities[0]), 'display_name projection is stripped before caching');
+    assert(!('matched' in firstHit.activities[0]), 'matched projection is stripped before caching');
+    firstHit.core.additions = 999;
+    var secondHit = await memoryCache.get('github', 'Org/Repo', 42);
+    assert(secondHit.core.additions === 10, 'cache reads return a defensive clone');
+
+    var partialEntry = Object.assign({}, fullEntry, {
+      prNumber: 43,
+      core: Object.assign({}, fullEntry.core, { number: 43 }),
+      completeness: 'partial',
+      partialReason: 'Comments 获取失败'
+    });
+    assert(await memoryCache.put(partialEntry) === false, 'partial entry is rejected');
+    assert((await memoryCache.get('github', 'Org/Repo', 43)) === null, 'partial entry never hits');
+
+    var staleEntry = Object.assign({}, fullEntry, {
+      prNumber: 44,
+      core: Object.assign({}, fullEntry.core, { number: 44 }),
+      schemaVersion: app.CACHE_SCHEMA_VERSION - 1
+    });
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 44), staleEntry);
+    assert((await memoryCache.get('github', 'Org/Repo', 44)) === null, 'stale schema is a miss');
+    assert((await memoryBackend.get(app.prCacheKey('github', 'Org/Repo', 44))) === null, 'stale schema is removed');
+
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 45), { broken: true });
+    assert((await memoryCache.get('github', 'Org/Repo', 45)) === null, 'corrupt entry is a miss');
+
+    var mismatchedEntry = Object.assign({}, fullEntry, {
+      prNumber: 46,
+      core: Object.assign({}, fullEntry.core, { number: 999 })
+    });
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 46), mismatchedEntry);
+    assert((await memoryCache.get('github', 'Org/Repo', 46)) === null, 'key/core identity mismatch is a miss');
+
+    var missingBranchEntry = Object.assign({}, fullEntry, {
+      prNumber: 47,
+      core: Object.assign({}, fullEntry.core, { number: 47, baseBranch: '' }),
+      activities: []
+    });
+    await memoryBackend.put(app.prCacheKey('github', 'Org/Repo', 47), missingBranchEntry);
+    assert((await memoryCache.get('github', 'Org/Repo', 47)) === null, 'full cache entry without base branch is a miss');
+  }
+
+  suite('F003 IndexedDB persistence');
+  if (app.CacheStore && typeof app.CacheStore.openIndexedDbBackend === 'function' && app.indexedDB) {
+    var cacheDbName = 'code-statistics-test-' + Date.now();
+    var idbBackendOne = await app.CacheStore.openIndexedDbBackend(cacheDbName);
+    var idbCacheOne = app.CacheStore.create(idbBackendOne);
+    var idbEntry = {
+      schemaVersion: app.CACHE_SCHEMA_VERSION,
+      cachedAt: '2026-07-26T00:00:00.000Z',
+      platform: 'gitcode',
+      repository: 'org/repo',
+      prNumber: 7,
+      core: {
+        platform: 'gitcode', repo: 'org/repo', number: 7, author: 'alice',
+        mergedAt: '2026-07-25T00:00:00Z', baseBranch: 'main', additions: 1, deletions: 0,
+        changedFiles: 1, completeness: 'full', url: 'https://example.test/7'
+      },
+      activities: [],
+      completeness: 'full',
+      partialReason: ''
+    };
+    await idbCacheOne.put(idbEntry);
+    idbBackendOne.close();
+    var idbBackendTwo = await app.CacheStore.openIndexedDbBackend(cacheDbName);
+    var idbCacheTwo = app.CacheStore.create(idbBackendTwo);
+    var reopenedHit = await idbCacheTwo.get('gitcode', 'org/repo', 7);
+    assert(reopenedHit && reopenedHit.core.number === 7, 'IndexedDB entry survives close and reopen');
+    idbBackendTwo.close();
+    await app.CacheStore.deleteIndexedDb(cacheDbName);
+  } else {
+    assert(false, 'IndexedDB cache API is available on HTTP');
+  }
+
+  suite('F003 GitHub PR core cache integration');
+  var ghCacheOriginalFetch = app.GitHubProvider._fetch;
+  var ghDetailCalls = 0;
+  app.GitHubProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({ total_count: 1, incomplete_results: false, items: [{ number: 42 }] });
+    }
+    if (url.indexOf('/pulls/42') >= 0) {
+      ghDetailCalls++;
+      return Promise.resolve({
+        number: 42, title: 'Cached PR', user: { login: 'alice' },
+        merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' },
+        additions: 10, deletions: 2, changed_files: 1
+      });
+    }
+    return Promise.resolve({});
+  };
+  var ghCoreCache = {
+    get: function() {
+      return Promise.resolve({
+        core: {
+          platform: 'github', repo: 'org/repo', number: 42, title: 'Cached PR',
+          author: 'alice', mergedAt: '2026-07-20T00:00:00Z', baseBranch: 'main',
+          additions: 10, deletions: 2, changedFiles: 1, completeness: 'full',
+          url: 'https://github.com/org/repo/pull/42'
+        },
+        activities: [{ activity_type: 'comment', completeness: 'full', actor_login: 'bob' }]
+      });
+    }
+  };
+  var ghCachedResult = await app.GitHubProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, ghCoreCache
+  );
+  assertEqual(ghDetailCalls, 0, 'GitHub cache hit skips PR detail request');
+  assertEqual(ghCachedResult.cacheHits, 1, 'GitHub result reports one cache hit');
+  assertEqual(ghCachedResult.networkPRs, 0, 'GitHub result reports zero network PR hydrations');
+  assert(ghCachedResult.prs[0] && ghCachedResult.prs[0]._cacheHit === true, 'GitHub cached core is marked as hit');
+  assert(
+    ghCachedResult.prs[0] && Array.isArray(ghCachedResult.prs[0]._cachedActivities) &&
+      ghCachedResult.prs[0]._cachedActivities.length === 1,
+    'GitHub cached activities travel with the core'
+  );
+  app.GitHubProvider._fetch = ghCacheOriginalFetch;
+
+  suite('F003 GitHub network PR count precision');
+  app.GitHubProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({
+        total_count: 2,
+        incomplete_results: false,
+        items: [{ number: 50 }, { number: 51 }]
+      });
+    }
+    var number = url.indexOf('/pulls/50') >= 0 ? 50 : 51;
+    return Promise.resolve({
+      number: number,
+      title: 'Network PR ' + number,
+      user: { login: 'alice' },
+      merged_at: '2026-07-20T00:00:00Z',
+      base: { ref: number === 50 ? 'main' : 'release' },
+      additions: 10,
+      deletions: 2,
+      changed_files: 1
+    });
+  };
+  var ghFilteredResult = await app.GitHubProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, { get: function() { return Promise.resolve(null); } }
+  );
+  assertEqual(ghFilteredResult.prs.length, 1, 'GitHub branch filtering keeps one selected PR');
+  assertEqual(ghFilteredResult.networkPRs, 1, 'GitHub network count includes only selected PRs');
+  assertEqual(
+    ghFilteredResult.cacheHits + ghFilteredResult.networkPRs,
+    ghFilteredResult.prs.length,
+    'GitHub cache/network counts add up to selected PR total'
+  );
+  app.GitHubProvider._fetch = ghCacheOriginalFetch;
+
+  suite('F003 GitCode PR core cache integration');
+  var gcCacheOriginalFetch = app.GitCodeProvider._fetch;
+  var gcStatsCalls = 0;
+  app.GitCodeProvider._fetch = function(url) {
+    if (url.indexOf('/pulls?') >= 0) {
+      return Promise.resolve([{
+        number: 7, title: 'Cached GC PR', user: { login: 'alice' },
+        merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' },
+        html_url: 'https://gitcode.com/org/repo/pulls/7'
+      }]);
+    }
+    gcStatsCalls++;
+    return Promise.resolve({ additions: 1, deletions: 0, changed_files: 1 });
+  };
+  var gcCoreCache = {
+    get: function() {
+      return Promise.resolve({
+        core: {
+          platform: 'gitcode', repo: 'org/repo', number: 7, title: 'Cached GC PR',
+          author: 'alice', mergedAt: '2026-07-20T00:00:00Z', baseBranch: 'main',
+          additions: 1, deletions: 0, changedFiles: 1, completeness: 'full',
+          url: 'https://gitcode.com/org/repo/pulls/7'
+        },
+        activities: []
+      });
+    }
+  };
+  var gcCachedResult = await app.GitCodeProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, gcCoreCache
+  );
+  assertEqual(gcStatsCalls, 0, 'GitCode cache hit skips code-stat request');
+  assertEqual(gcCachedResult.cacheHits, 1, 'GitCode result reports one cache hit');
+  assertEqual(gcCachedResult.networkPRs, 0, 'GitCode result reports zero network PR hydrations');
+  assert(gcCachedResult.prs[0] && gcCachedResult.prs[0]._cacheHit === true, 'GitCode cached core is marked as hit');
+  app.GitCodeProvider._fetch = gcCacheOriginalFetch;
+
+  suite('F003 collaboration cache integration');
+  assert(typeof app.fetchCollaborationForPR === 'function', 'fetchCollaborationForPR is exposed');
+  if (typeof app.fetchCollaborationForPR === 'function') {
+    var collabProviderCalls = 0;
+    var collabCacheWrites = 0;
+    var collabProvider = {
+      fetchCollaboration: function() {
+        collabProviderCalls++;
+        return Promise.resolve({
+          activities: [{ activity_type: 'comment', completeness: 'full', actor_login: 'bob' }],
+          partial: false,
+          partialReason: ''
+        });
+      }
+    };
+    var collabCache = {
+      put: function() {
+        collabCacheWrites++;
+        return Promise.resolve(true);
+      }
+    };
+    var cachedCollabResult = await app.fetchCollaborationForPR({
+      provider: collabProvider,
+      token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: {
+        _cacheHit: true,
+        _cachedActivities: [{ activity_type: 'approval', completeness: 'full', actor_login: 'carol' }]
+      }
+    }, new AbortController().signal, collabCache, function(){});
+    assertEqual(collabProviderCalls, 0, 'cached collaboration skips Provider');
+    assertEqual(cachedCollabResult.activities.length, 1, 'cached collaboration returns raw activities');
+    assert(cachedCollabResult.cacheHit === true, 'cached collaboration reports hit');
+
+    var networkPr = {
+      platform: 'github', repo: 'org/repo', number: 8, title: 'Network PR',
+      author: 'alice', mergedAt: '2026-07-20T00:00:00Z', baseBranch: 'main',
+      additions: 2, deletions: 1, changedFiles: 1, completeness: 'full',
+      url: 'https://github.com/org/repo/pull/8'
+    };
+    var partialCacheEntry = app.createPRCacheEntry(
+      Object.assign({}, networkPr, { completeness: 'partial' }),
+      []
+    );
+    assertEqual(partialCacheEntry.completeness, 'partial', 'cache entry preserves PR completeness');
+
+    var networkCollabResult = await app.fetchCollaborationForPR({
+      provider: collabProvider, token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: networkPr
+    }, new AbortController().signal, collabCache, function(){});
+    assertEqual(collabProviderCalls, 1, 'cache miss fetches collaboration once');
+    assertEqual(collabCacheWrites, 1, 'full collaboration writes one cache entry');
+    assert(networkCollabResult.cacheHit === false, 'network collaboration reports miss');
+
+    var abortedAfterFetch = new AbortController();
+    abortedAfterFetch.abort();
+    await app.fetchCollaborationForPR({
+      provider: collabProvider, token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: Object.assign({}, networkPr, { number: 10 })
+    }, abortedAfterFetch.signal, collabCache, function(){});
+    assertEqual(
+      collabCacheWrites,
+      2,
+      'completed full PR remains cacheable when query UI is cancelled'
+    );
+
+    collabProvider.fetchCollaboration = function() {
+      collabProviderCalls++;
+      return Promise.resolve({ activities: [], partial: true, partialReason: 'Comments 获取失败' });
+    };
+    var partialCollabResult = await app.fetchCollaborationForPR({
+      provider: collabProvider, token: 'tok',
+      r: { platform: 'github', owner: 'org', repo: 'repo' },
+      pr: Object.assign({}, networkPr, { number: 9 })
+    }, new AbortController().signal, collabCache, function(){});
+    assert(partialCollabResult.partial === true, 'partial collaboration remains partial');
+    assertEqual(collabCacheWrites, 2, 'partial collaboration is not cached');
+  }
+
+  suite('F003 PR core partial reason propagation');
+  var corePartialGhOriginalFetch = app.GitHubProvider._fetch;
+  app.GitHubProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({ total_count: 1, incomplete_results: false, items: [{ number: 99 }] });
+    }
+    return Promise.resolve({
+      number: 99, title: 'Bad metrics', user: { login: 'alice' },
+      merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' },
+      additions: 'bad', deletions: 1, changed_files: 1
+    });
+  };
+  var ghCorePartialResult = await app.GitHubProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, { get: function(){ return Promise.resolve(null); } }
+  );
+  app.GitHubProvider._fetch = corePartialGhOriginalFetch;
+  assert(ghCorePartialResult.partial === true, 'GitHub invalid PR metrics mark repository partial');
+  assert(
+    ghCorePartialResult.partialReason.indexOf('1 个 PR 代码量不完整') >= 0,
+    'GitHub partial reason reports incomplete PR count'
+  );
+
+  var corePartialGcOriginalFetch = app.GitCodeProvider._fetch;
+  app.GitCodeProvider._fetch = function(url) {
+    if (url.indexOf('/pulls?') >= 0) {
+      return Promise.resolve([{
+        number: 77, title: 'Too large', user: { login: 'alice' },
+        merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' }
+      }]);
+    }
+    if (url.indexOf('/files') >= 0) {
+      return Promise.resolve([{ additions: 1, deletions: 1, too_large: true }]);
+    }
+    return Promise.resolve({ additions: null, deletions: null, changed_files: null });
+  };
+  var gcCorePartialResult = await app.GitCodeProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, { get: function(){ return Promise.resolve(null); } }
+  );
+  app.GitCodeProvider._fetch = corePartialGcOriginalFetch;
+  assert(gcCorePartialResult.partial === true, 'GitCode too_large marks repository partial');
+  assert(
+    gcCorePartialResult.partialReason.indexOf('1 个 PR 代码量不完整') >= 0,
+    'GitCode partial reason reports incomplete PR count'
+  );
+
+  suite('F003 query progress state machine');
+  assert(typeof app.createQueryProgress === 'function', 'createQueryProgress is exposed');
+  assert(typeof app.formatQueryTerminal === 'function', 'formatQueryTerminal is exposed');
+  assert(typeof app.formatRepoTerminal === 'function', 'formatRepoTerminal is exposed');
+  if (typeof app.createQueryProgress === 'function' &&
+      typeof app.formatQueryTerminal === 'function' &&
+      typeof app.formatRepoTerminal === 'function') {
+    var queryProgress = app.createQueryProgress(2);
+    assertEqual(queryProgress.snapshot(), {
+      total: 2, completed: 0, cacheHits: 0, networkPRs: 0
+    }, 'new progress starts at zero completed');
+    assert(queryProgress.settle('github:org/repo#1', 'cache') === true, 'first cache hit settles');
+    assertEqual(queryProgress.snapshot(), {
+      total: 2, completed: 1, cacheHits: 1, networkPRs: 0
+    }, 'cache hit increments completed and cache count');
+    assert(queryProgress.settle('github:org/repo#1', 'network') === false, 'duplicate settle is ignored');
+    assertEqual(queryProgress.snapshot().completed, 1, 'duplicate settle does not overcount');
+    queryProgress.settle('github:org/repo#2', 'network');
+    assertEqual(queryProgress.snapshot(), {
+      total: 2, completed: 2, cacheHits: 1, networkPRs: 1
+    }, 'network settle reaches exact total');
+
+    var fullStatuses = [{
+      repo: { platform: 'github', owner: 'org', repo: 'repo' },
+      status: 'ok', totalPRs: 2, completedPRs: 2, cacheHits: 1, networkPRs: 1
+    }];
+    var fullTitle = app.formatQueryTerminal(queryProgress.snapshot(), fullStatuses, false);
+    assert(fullTitle.indexOf('查询完成') === 0, 'full query has completed terminal');
+    assert(fullTitle.indexOf('缓存 1') >= 0 && fullTitle.indexOf('网络 1') >= 0, 'full terminal shows cache/network counts');
+    assert(fullTitle.indexOf('正在') < 0, 'full terminal is not still running');
+
+    var partialStatuses = [{
+      repo: { platform: 'gitcode', owner: 'org', repo: 'repo' },
+      status: 'partial', partialReason: 'Comments 获取失败',
+      totalPRs: 2, completedPRs: 2, cacheHits: 0, networkPRs: 2
+    }];
+    var partialTitle = app.formatQueryTerminal(queryProgress.snapshot(), partialStatuses, false);
+    assert(partialTitle.indexOf('查询完成（部分）') === 0, 'partial query has partial terminal');
+    var partialRepo = app.formatRepoTerminal(partialStatuses[0]);
+    assert(partialRepo.icon === '⚠️', 'partial repo uses warning icon');
+    assert(partialRepo.text.indexOf('Comments 获取失败') >= 0, 'partial repo exposes reason');
+    assert(partialRepo.text.indexOf('2/2 PR') >= 0, 'partial repo exposes settled PR count');
+
+    var failedStatuses = [{
+      repo: { platform: 'github', owner: 'org', repo: 'broken' },
+      status: 'failed', error: 'GitHub API 500'
+    }];
+    assert(
+      app.formatQueryTerminal(queryProgress.snapshot(), failedStatuses, false).indexOf('查询完成（有失败）') === 0,
+      'failed query has failed terminal'
+    );
+    assert(app.formatRepoTerminal(failedStatuses[0]).text.indexOf('GitHub API 500') >= 0, 'failed repo exposes reason');
+    assertEqual(
+      app.formatQueryTerminal(queryProgress.snapshot(), fullStatuses, true),
+      '查询已取消',
+      'cancelled query has unique terminal'
+    );
+  }
+
+  suite('F003 local user remapping');
+  assert(
+    typeof app.remapCurrentResultsAfterUsersChanged === 'function',
+    'remapCurrentResultsAfterUsersChanged is exposed'
+  );
+  if (typeof app.remapCurrentResultsAfterUsersChanged === 'function') {
+    var remapOriginalFetch = app.fetch;
+    var remapOriginalLoadUsers = app.Storage.loadUsers;
+    var remapFetchCalls = 0;
+    app.fetch = function() {
+      remapFetchCalls++;
+      return Promise.reject(new Error('network must not be used'));
+    };
+    var remapUsers = [{
+      user_key: 'mapped-bob', display_name: 'Mapped Bob',
+      github_login: 'bob-gh', gitcode_login: '', enabled: true
+    }];
+    app.Storage.loadUsers = function() { return remapUsers; };
+    app.StatsEngine.currentActivities = [{
+      platform: 'github', repository: 'org/repo', actor_login: 'bob-gh',
+      user_key: '', display_name: 'bob-gh', matched: false,
+      activity_type: 'comment', completeness: 'full', pr_number: 1,
+      pr_title: 'PR', merged_at: '2026-07-20T00:00:00Z',
+      source_type: 'issue_comment', source_id: '1',
+      event_at: '2026-07-20T00:00:00Z', body_summary: 'hello', activity_url: ''
+    }];
+    app.document.getElementById('stat-user-type').value = 'all';
+    var remapped = app.remapCurrentResultsAfterUsersChanged(remapUsers);
+    assert(remapped === true, 'current results report local remap');
+    assert(app.StatsEngine.currentActivities[0].matched === true, 'existing activity becomes matched');
+    assertEqual(app.StatsEngine.currentActivities[0].user_key, 'mapped-bob', 'existing activity gets current user key');
+    assert(
+      app.document.getElementById('summary-tbody').textContent.indexOf('Mapped Bob') >= 0,
+      'summary DOM rerenders with current display name'
+    );
+    assertEqual(remapFetchCalls, 0, 'local remap performs zero network requests');
+
+    app.StatsEngine.currentActivities = [];
+    assert(app.remapCurrentResultsAfterUsersChanged(remapUsers) === false, 'no current activities is a safe no-op');
+    app.fetch = remapOriginalFetch;
+    app.Storage.loadUsers = remapOriginalLoadUsers;
+  }
+
+  suite('F003 repository discovery runs in parallel');
+  var parallelOriginalLoadConfig = app.Storage.loadConfig;
+  var parallelOriginalLoadUsers = app.Storage.loadUsers;
+  var parallelOriginalGetDefaultBranch = app.GitHubProvider.getDefaultBranch;
+  var parallelOriginalFetchMergedPRs = app.GitHubProvider.fetchMergedPRs;
+  var parallelResolvers = [];
+  var parallelStarts = 0;
+  app.Storage.loadConfig = function() {
+    return {
+      githubToken: 'tok',
+      gitcodeToken: '',
+      repositories: [
+        'https://github.com/org/repo-a',
+        'https://github.com/org/repo-b'
+      ]
+    };
+  };
+  app.Storage.loadUsers = function() { return []; };
+  app.GitHubProvider.getDefaultBranch = function() {
+    parallelStarts++;
+    return new Promise(function(resolve) { parallelResolvers.push(resolve); });
+  };
+  app.GitHubProvider.fetchMergedPRs = function() {
+    return Promise.resolve({ prs: [], partial: false, partialReason: '', cacheHits: 0, networkPRs: 0 });
+  };
+  app.document.getElementById('stat-start').value = '2026-07-01';
+  app.document.getElementById('stat-end').value = '2026-07-31';
+  app.document.getElementById('stat-platform').value = '';
+  app.document.getElementById('stat-user').value = '';
+  app.document.getElementById('stat-repo').value = '';
+  var parallelQuery = app.runQuery();
+  await new Promise(function(resolve) { setTimeout(resolve, 0); });
+  assertEqual(parallelStarts, 2, 'both repository discovery tasks start before either resolves');
+  parallelResolvers.forEach(function(resolve) { resolve('main'); });
+  await parallelQuery;
+  app.Storage.loadConfig = parallelOriginalLoadConfig;
+  app.Storage.loadUsers = parallelOriginalLoadUsers;
+  app.GitHubProvider.getDefaultBranch = parallelOriginalGetDefaultBranch;
+  app.GitHubProvider.fetchMergedPRs = parallelOriginalFetchMergedPRs;
+
+  suite('F003 user mutations trigger one remap path');
+  if (typeof app.remapCurrentResultsAfterUsersChanged === 'function') {
+    var wiringOriginalLoadUsers = app.Storage.loadUsers;
+    var wiringOriginalSaveUsers = app.Storage.saveUsers;
+    var wiringOriginalRenderUsers = app.renderUsers;
+    var wiringOriginalRemap = app.remapCurrentResultsAfterUsersChanged;
+    var wiringOriginalCloseUser = app.closeUserDialog;
+    var wiringOriginalCloseImport = app.closeImportDialog;
+    var wiringOriginalConfirm = app.confirm;
+    var wiringUsers = [{
+      user_key: 'alice', display_name: 'Alice', email: '',
+      github_login: 'alice-gh', gitcode_login: '', enabled: true
+    }];
+    var mutationRemaps = 0;
+    app.Storage.loadUsers = function() { return wiringUsers; };
+    app.Storage.saveUsers = function(users) { wiringUsers = users; };
+    app.renderUsers = function() {};
+    app.remapCurrentResultsAfterUsersChanged = function() { mutationRemaps++; return true; };
+    app.closeUserDialog = function() {};
+    app.closeImportDialog = function() {};
+    app.confirm = function() { return true; };
+
+    app.document.getElementById('edit-index').value = '0';
+    app.document.getElementById('edit-user-key').value = 'alice';
+    app.document.getElementById('edit-display-name').value = 'Alice Updated';
+    app.document.getElementById('edit-email').value = '';
+    app.document.getElementById('edit-github-login').value = 'alice-gh';
+    app.document.getElementById('edit-gitcode-login').value = '';
+    app.saveUser({ preventDefault: function() {} });
+    assertEqual(mutationRemaps, 1, 'save/edit triggers remap helper once');
+
+    app.toggleUserEnabled(0, false);
+    assertEqual(mutationRemaps, 2, 'toggle triggers remap helper once');
+
+    app.deleteUser(0);
+    assertEqual(mutationRemaps, 3, 'delete triggers remap helper once');
+
+    app.pendingImportRows = [{
+      record: {
+        user_key: 'bob', display_name: 'Bob', email: '',
+        github_login: 'bob-gh', gitcode_login: '', enabled: true
+      }
+    }];
+    app.confirmImport();
+    assertEqual(mutationRemaps, 4, 'CSV confirm import triggers remap helper once');
+
+    app.Storage.loadUsers = wiringOriginalLoadUsers;
+    app.Storage.saveUsers = wiringOriginalSaveUsers;
+    app.renderUsers = wiringOriginalRenderUsers;
+    app.remapCurrentResultsAfterUsersChanged = wiringOriginalRemap;
+    app.closeUserDialog = wiringOriginalCloseUser;
+    app.closeImportDialog = wiringOriginalCloseImport;
+    app.confirm = wiringOriginalConfirm;
+  }
+
+  suite('F003 user mutation refreshes filters once');
+  var refreshOriginalLoadUsers = app.Storage.loadUsers;
+  var refreshOriginalSaveUsers = app.Storage.saveUsers;
+  var refreshOriginalFilters = app.refreshFilterDropdowns;
+  var refreshOriginalRenderResults = app.renderResults;
+  var refreshOriginalCloseUser = app.closeUserDialog;
+  var refreshUsers = [{
+    user_key: 'alice', display_name: 'Alice', email: '',
+    github_login: 'alice-gh', gitcode_login: '', enabled: true
+  }];
+  var refreshCalls = 0;
+  app.Storage.loadUsers = function() { return refreshUsers; };
+  app.Storage.saveUsers = function(users) { refreshUsers = users; };
+  app.refreshFilterDropdowns = function() { refreshCalls++; };
+  app.renderResults = function() {};
+  app.closeUserDialog = function() {};
+  app.StatsEngine.currentActivities = [{
+    platform: 'github', repository: 'org/repo', actor_login: 'alice-gh',
+    activity_type: 'development', completeness: 'full', pr_number: 1
+  }];
+  app.document.getElementById('edit-index').value = '0';
+  app.document.getElementById('edit-user-key').value = 'alice';
+  app.document.getElementById('edit-display-name').value = 'Alice Once';
+  app.document.getElementById('edit-email').value = '';
+  app.document.getElementById('edit-github-login').value = 'alice-gh';
+  app.document.getElementById('edit-gitcode-login').value = '';
+  app.saveUser({ preventDefault: function() {} });
+  assertEqual(refreshCalls, 1, 'save/edit rebuilds filter dropdowns once');
+  app.Storage.loadUsers = refreshOriginalLoadUsers;
+  app.Storage.saveUsers = refreshOriginalSaveUsers;
+  app.refreshFilterDropdowns = refreshOriginalFilters;
+  app.renderResults = refreshOriginalRenderResults;
+  app.closeUserDialog = refreshOriginalCloseUser;
+
   // --- Aggregation math invariant ---
   suite('Aggregation math');
   abcAgg.forEach(function(r) {
@@ -556,6 +1216,14 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   var privacyNotice = app.document.getElementById('local-data-notice');
   assert(privacyNotice && privacyNotice.textContent.indexOf('localStorage') >= 0, 'config page explains localStorage persistence');
   assert(privacyNotice && privacyNotice.textContent.indexOf('不会上传') >= 0, 'config page explains data is not uploaded');
+  assert(
+    privacyNotice && privacyNotice.textContent.indexOf('IndexedDB') >= 0,
+    'config page discloses merged PR cache persistence'
+  );
+  assert(
+    privacyNotice && privacyNotice.textContent.indexOf('file://') >= 0,
+    'config page discloses file protocol memory-only cache'
+  );
   var filterActions = app.document.querySelector('.filter-actions');
   assert(filterActions && filterActions.contains(app.document.getElementById('btn-query')), 'query button uses dedicated aligned filter action group');
 
