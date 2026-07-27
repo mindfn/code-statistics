@@ -205,6 +205,15 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 tbody tr:last-child td { border-bottom: none; }
 td.num { text-align: right; font-family: var(--mono); font-size: .85rem; font-variant-numeric: tabular-nums; }
 td.actions { white-space: nowrap; }
+.branch-combobox { position: relative; display: inline-block; }
+.branch-combobox-input { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: .8rem; width: 140px; outline: none; }
+.branch-combobox-input:focus { border-color: var(--primary); }
+.branch-combobox-list { position: absolute; top: 100%; left: 0; min-width: 100%; max-height: 200px; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 6px; z-index: 100; display: none; margin-top: 2px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.branch-combobox-list.open { display: block; }
+.branch-combobox-item { padding: 4px 8px; font-size: .8rem; cursor: pointer; white-space: nowrap; }
+.branch-combobox-item:hover, .branch-combobox-item.selected { background: var(--primary); color: #fff; }
+.branch-combobox-item.no-match { color: var(--text-2); cursor: default; padding: 6px 8px; }
+.branch-combobox-item.no-match:hover { background: transparent; color: var(--text-2); }
 .empty-row td { text-align: center; color: var(--text-2); padding: 30px; }
 
 /* Additions / deletions coloring (summary columns shifted after collaboration columns) */
@@ -323,6 +332,16 @@ td.actions { white-space: nowrap; }
   word-break: break-word;
   line-height: 1.5;
 }
+
+.listing-warning {
+  margin-bottom: 12px; padding: 10px 14px;
+  background: rgba(255, 159, 10, 0.12);
+  border: 1px solid rgba(255, 159, 10, 0.3);
+  border-radius: var(--radius);
+  color: #ff9f0a; font-size: .85rem; line-height: 1.5;
+}
+.listing-warning .warning-title { font-weight: 600; margin-bottom: 4px; }
+.listing-warning .warning-detail { color: var(--text-2); font-size: .8rem; }
 
 /* ========== Dialog ========== */
 dialog {
@@ -511,6 +530,15 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
       </div>
 
       <div class="card">
+        <h2>数据管理</h2>
+        <p class="text-sm text-muted mb-8">已合入 PR 的代码量数据会缓存在本机 IndexedDB（<code>code-statistics.pr-cache.v1</code>），加快后续查询速度。可在浏览器 DevTools → Application → IndexedDB 中查看。如果数据异常，可清除缓存后重新查询。</p>
+        <div class="form-row">
+          <button class="btn btn-danger btn-sm" onclick="clearPRCache()">清除 PR 缓存</button>
+          <span id="cache-clear-status" class="text-sm"></span>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>网络与代理</h2>
         <p>本工具沿用操作系统或浏览器的代理设置，不提供应用内代理配置。</p>
         <p>请确保您的浏览器可以正常访问以下地址：</p>
@@ -602,6 +630,7 @@ tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
       </div>
 
       <div id="results-section" class="hidden">
+        <div id="listing-warning" class="listing-warning hidden"></div>
         <div class="toolbar">
           <span class="text-sm text-muted" id="results-summary"></span>
           <div class="toolbar-right">
@@ -734,6 +763,15 @@ function parseRepoUrl(url) {
 
 function repoKey(platform, owner, repo) {
   return platform + ':' + owner + '/' + repo;
+}
+
+/**
+ * Normalize repo entry: supports legacy string format and new {url, branch} format.
+ * Returns { url: string, branch: string } — branch may be '' (auto-detect).
+ */
+function normalizeRepoEntry(entry) {
+  if (typeof entry === 'string') return { url: entry, branch: '' };
+  return { url: entry.url || '', branch: entry.branch || '' };
 }
 
 function formatNum(n) {
@@ -1219,6 +1257,31 @@ var GitHubProvider = {
     return data.default_branch;
   },
 
+  listBranches: async function(token, owner, repo, signal) {
+    var allBranches = [], page = 1;
+    while (true) {
+      var url = this.BASE + '/repos/' + owner + '/' + repo + '/branches?per_page=100&page=' + page;
+      var data = await this._fetch(url, token, signal);
+      if (!Array.isArray(data) || data.length === 0) break;
+      allBranches = allBranches.concat(data.map(function(b) { return b.name; }));
+      if (data.length < 100) break;
+      page++;
+    }
+    var defaultBranch = '';
+    try {
+      var repoData = await this._fetch(this.BASE + '/repos/' + owner + '/' + repo, token, signal);
+      defaultBranch = repoData.default_branch || '';
+    } catch(e) {}
+    // Ensure default branch is at the top of the list
+    if (defaultBranch && allBranches.indexOf(defaultBranch) === -1) {
+      allBranches.unshift(defaultBranch);
+    } else if (defaultBranch) {
+      allBranches = allBranches.filter(function(b) { return b !== defaultBranch; });
+      allBranches.unshift(defaultBranch);
+    }
+    return { branches: allBranches, defaultBranch: defaultBranch };
+  },
+
   /**
    * Fetch merged PRs for a repo in date range.
    * Uses search API, handles 1000 limit.
@@ -1234,7 +1297,7 @@ var GitHubProvider = {
     var eStr = searchEnd.toISOString().slice(0,10);
     var q = 'repo:' + owner + '/' + repo + ' type:pr is:merged merged:' + sStr + '..' + eStr;
 
-    var allItems = [], page = 1, totalCount = 0, partial = false;
+    var allItems = [], page = 1, totalCount = 0, partial = false, listingIncomplete = false;
     while (true) {
       var data = await this._fetch(
         this.BASE + '/search/issues?q=' + encodeURIComponent(q) + '&per_page=100&page=' + page,
@@ -1242,14 +1305,14 @@ var GitHubProvider = {
       );
       if (page === 1) totalCount = data.total_count;
       // FCR-4: GitHub returns incomplete_results=true when search timed out
-      if (data.incomplete_results) partial = true;
+      if (data.incomplete_results) { partial = true; listingIncomplete = true; }
       allItems = allItems.concat(data.items);
       if (onProgress) onProgress('搜索 PR 中', allItems.length, Math.min(totalCount, 1000));
       if (allItems.length >= totalCount || allItems.length >= 1000 || data.items.length < 100) break;
       page++;
       await sleep(2200); // Search rate limit: 30/min → ~2s between requests
     }
-    if (totalCount > 1000) partial = true;
+    if (totalCount > 1000) { partial = true; listingIncomplete = true; }
     var partialReason = '';
     if (partial) {
       if (totalCount > 1000) partialReason = '超过 1000 条搜索上限';
@@ -1330,10 +1393,14 @@ var GitHubProvider = {
       partialReason = (partialReason ? partialReason + '; ' : '') +
         incompletePRCount + ' 个 PR 代码量不完整';
     }
+    // listingIncomplete: search-level issue where entire PRs may be missing
+    // (incomplete_results / >1000 limit). Distinct from individual PR metric issues
+    // which are already tracked per-activity via completeness field.
     return {
       prs: prs,
       partial: partial,
       partialReason: partialReason,
+      listingIncomplete: listingIncomplete,
       cacheHits: cacheHits,
       networkPRs: networkPRs
     };
@@ -1557,6 +1624,31 @@ var GitCodeProvider = {
     return data.default_branch;
   },
 
+  listBranches: async function(token, owner, repo, signal) {
+    var allBranches = [], page = 1;
+    while (true) {
+      var url = this.BASE + '/repos/' + owner + '/' + repo + '/branches?per_page=100&page=' + page;
+      var data = await this._fetch(url, token, signal);
+      if (!Array.isArray(data) || data.length === 0) break;
+      allBranches = allBranches.concat(data.map(function(b) { return b.name; }));
+      if (data.length < 100) break;
+      page++;
+    }
+    var defaultBranch = '';
+    try {
+      var repoData = await this._fetch(this.BASE + '/repos/' + owner + '/' + repo, token, signal);
+      defaultBranch = repoData.default_branch || '';
+    } catch(e) {}
+    // Ensure default branch is at the top of the list
+    if (defaultBranch && allBranches.indexOf(defaultBranch) === -1) {
+      allBranches.unshift(defaultBranch);
+    } else if (defaultBranch) {
+      allBranches = allBranches.filter(function(b) { return b !== defaultBranch; });
+      allBranches.unshift(defaultBranch);
+    }
+    return { branches: allBranches, defaultBranch: defaultBranch };
+  },
+
   /**
    * Fetch merged PRs for a repo in date range.
    * Uses list API with base filter + local merged_at check.
@@ -1565,11 +1657,15 @@ var GitCodeProvider = {
     var range = dateRangeToTimestamps(startDate, endDate);
     var allPRs = [], page = 1;
 
-    // Paginate through all merged PRs for default branch
+    // Paginate through merged PRs, using since= to narrow the listing.
+    // GitCode since= filters by update time (not merge time), so we expand
+    // the window by 14 days to avoid missing PRs merged near the boundary.
+    var sinceDate = new Date(range.start.getTime() - 14 * 86400000).toISOString();
     while (true) {
       if (onProgress) onProgress('获取 PR 列表', (page - 1) * 100, -1);
       var url = this.BASE + '/repos/' + owner + '/' + repo + '/pulls' +
         '?state=merged&base=' + encodeURIComponent(defaultBranch) +
+        '&sort=updated&direction=desc&since=' + encodeURIComponent(sinceDate) +
         '&per_page=100&page=' + page;
       var items = await this._fetch(url, token, signal);
       if (!Array.isArray(items)) items = [];
@@ -1644,6 +1740,7 @@ var GitCodeProvider = {
       prs: prs,
       partial: incompletePRCount > 0,
       partialReason: incompletePRCount > 0 ? incompletePRCount + ' 个 PR 代码量不完整' : '',
+      listingIncomplete: false, // GitCode uses pagination, no search limit
       cacheHits: cacheHits,
       networkPRs: networkPRs
     };
@@ -1675,12 +1772,12 @@ var GitCodeProvider = {
       this.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number + '/files', token, signal
     );
     if (!Array.isArray(files)) return { additions: 0, deletions: 0, changedFiles: 0, completeness: 'failed' };
-    var additions = 0, deletions = 0, tooLarge = false, hasUnparsable = false;
+    var additions = 0, deletions = 0, hasUnparsable = false;
     files.forEach(function(f) {
-      // too_large can be at file level or nested under patch
-      if (f.too_large || (f.patch && f.patch.too_large)) tooLarge = true;
       var fa = parseInt(f.additions, 10);
       var fd = parseInt(f.deletions, 10);
+      // too_large means the diff text is truncated, but additions/deletions
+      // counts may still be valid. Only mark partial when counts are missing.
       if (isNaN(fa) || isNaN(fd)) { hasUnparsable = true; return; }
       additions += fa;
       deletions += fd;
@@ -1689,7 +1786,7 @@ var GitCodeProvider = {
       additions: additions,
       deletions: deletions,
       changedFiles: files.length,
-      completeness: (tooLarge || hasUnparsable) ? 'partial' : 'full'
+      completeness: hasUnparsable ? 'partial' : 'full'
     };
   },
 
@@ -1847,14 +1944,15 @@ var StatsEngine = {
    */
   buildRepoList: function(configRepos, filters) {
     var repos = {};
-    configRepos.forEach(function(repoUrl) {
-      var parsed = parseRepoUrl(repoUrl);
+    configRepos.forEach(function(r) {
+      var entry = normalizeRepoEntry(r);
+      var parsed = parseRepoUrl(entry.url);
       if (!parsed) return;
       if (filters.platform && parsed.platform !== filters.platform) return;
       if (filters.repo && (parsed.owner + '/' + parsed.repo) !== filters.repo) return;
       var key = repoKey(parsed.platform, parsed.owner, parsed.repo);
       if (!repos[key]) {
-        repos[key] = { platform: parsed.platform, owner: parsed.owner, repo: parsed.repo, key: key };
+        repos[key] = { platform: parsed.platform, owner: parsed.owner, repo: parsed.repo, key: key, branch: entry.branch };
       }
     });
     return Object.values(repos);
@@ -1913,7 +2011,8 @@ var StatsEngine = {
           matched: !!act.matched,
           prCount: 0, commentCount: 0, approveCount: 0,
           additions: 0, deletions: 0, changedFiles: 0,
-          hasPartial: false, hasFailed: false
+          hasPartial: false, hasFailed: false,
+          partial_reason: ''
         };
       }
       var g = groups[key];
@@ -1927,9 +2026,11 @@ var StatsEngine = {
       } else if (act.activity_type === 'approval') {
         g.approveCount++;
       }
-      if (act.completeness === 'partial') g.hasPartial = true;
+      if (act.completeness === 'partial') {
+        g.hasPartial = true;
+        if (!g.partial_reason) g.partial_reason = act.partial_reason || '个别 PR 数据不完整';
+      }
       if (act.completeness === 'failed') g.hasFailed = true;
-      if (act.repo_partial) g.hasPartial = true;
     });
     return Object.values(groups);
   },
@@ -1958,7 +2059,9 @@ var StatsEngine = {
 };
 
 function renderCompletenessBadge(row) {
-  return '<span class="' + StatsEngine.completenessClass(row) + '">' +
+  var reason = row.partial_reason || '';
+  var titleAttr = reason ? (' title="' + escapeHtml(reason) + '"') : '';
+  return '<span class="' + StatsEngine.completenessClass(row) + '"' + titleAttr + '>' +
     StatsEngine.completenessLabel(row) + '</span>';
 }
 
@@ -2183,7 +2286,7 @@ async function runQuery() {
     document.getElementById('progress-title').textContent = '正在查询... (' + completedCount + '/' + repos.length + ' 仓库)';
 
     try {
-      var defaultBranch = await provider.getDefaultBranch(token, r.owner, r.repo, queryAbort.signal);
+      var defaultBranch = r.branch || await provider.getDefaultBranch(token, r.owner, r.repo, queryAbort.signal);
       var result = await provider.fetchMergedPRs(
         token, r.owner, r.repo, defaultBranch, startDate, endDate, queryAbort.signal,
         function(stage, done, total) {
@@ -2209,6 +2312,7 @@ async function runQuery() {
         ' 个已合并 PR（缓存 ' + rs.cacheHits + ' · 网络 ' + rs.networkPRs + '）' +
         partialNote + '</span>';
       rs.status = result.partial ? 'partial' : 'ok';
+      rs.listingIncomplete = result.listingIncomplete || false;
       rs.partialReason = result.partialReason || '';
     } catch(err) {
       if (queryAbort.signal.aborted) {
@@ -2348,23 +2452,10 @@ async function runQuery() {
   var errorSummary = renderErrorSummary(repoStatuses);
   if (errorSummary && progressBox) progressBox.appendChild(errorSummary);
 
-  // Propagate repo-level partial status to all activities of that repo
-  var repoPartialMap = {};
-  repoStatuses.forEach(function(rs) {
-    if (rs.status === 'partial') {
-      repoPartialMap[rs.repo.platform + ':' + (rs.repo.owner + '/' + rs.repo.repo)] = rs.partialReason || '结果可能不完整';
-    }
-  });
-  allActivities.forEach(function(act) {
-    var reason = repoPartialMap[act.platform + ':' + act.repository];
-    if (reason) {
-      act.repo_partial = true;
-      if (act.completeness === 'full') {
-        act.completeness = 'partial';
-        act.partial_reason = reason;
-      }
-    }
-  });
+  // Individual PR completeness (too_large, unparsable fields) is tracked per-
+  // activity via act.completeness — only the PR author's summary row shows "部分".
+  // Listing-level issues (search >1000 / incomplete_results) are shown as a
+  // prominent warning banner in the results area, not per-user completeness badges.
 
   // Map activities to users and aggregate
   StatsEngine.mapActivitiesToUsers(allActivities, users);
@@ -2378,6 +2469,12 @@ async function runQuery() {
   StatsEngine.partialRepos = repoStatuses
     .filter(function(rs) { return rs.status === 'partial'; })
     .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo, reason: rs.partialReason || '结果可能不完整' }; });
+  // Listing-level warnings (search limit / incomplete) — shown as a banner, not per-user badges
+  StatsEngine.listingWarnings = repoStatuses
+    .filter(function(rs) { return rs.listingIncomplete; })
+    .map(function(rs) {
+      return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo, reason: rs.partialReason || '搜索结果不完整' };
+    });
 
   // Apply display filters and render
   renderResults(filters);
@@ -2477,13 +2574,35 @@ function renderResults(filters) {
   // Hide detail by default
   document.getElementById('detail-section').classList.add('hidden');
 
+  // Listing-level warning banner
+  var listingWarningEl = document.getElementById('listing-warning');
+  var listingWarnings = StatsEngine.listingWarnings || [];
+  if (listingWarnings.length > 0) {
+    var warnHtml = '<div class="warning-title">⚠️ 数据可能不完整</div>';
+    listingWarnings.forEach(function(w) {
+      warnHtml += '<div class="warning-detail">' + escapeHtml(w.platform) + ': ' +
+        escapeHtml(w.repo) + ' — ' + escapeHtml(w.reason) +
+        '。建议缩小时间范围重新查询。</div>';
+    });
+    listingWarningEl.innerHTML = warnHtml;
+    listingWarningEl.classList.remove('hidden');
+  } else {
+    listingWarningEl.classList.add('hidden');
+    listingWarningEl.innerHTML = '';
+  }
+
   // Results summary text
   var unmatchedCount = summary.filter(function(r) { return !r.matched; }).length;
   var failedCount = StatsEngine.failedRepos.length;
-  var partialCount = StatsEngine.partialRepos.length;
+  // Count repos with PR-metric partial (individual PRs incomplete, not listing-level)
+  var metricPartialCount = (StatsEngine.partialRepos || []).filter(function(pr) {
+    return !(StatsEngine.listingWarnings || []).some(function(lw) {
+      return lw.platform === pr.platform && lw.repo === pr.repo;
+    });
+  }).length;
   var summaryText = '共 ' + activities.length + ' 条活动，' + matchedSummary.length + ' 个用户';
   if (unmatchedCount > 0) summaryText += '，' + unmatchedCount + ' 个未匹配作者';
-  if (partialCount > 0) summaryText += '，' + partialCount + ' 个仓库为部分统计';
+  if (metricPartialCount > 0) summaryText += '，' + metricPartialCount + ' 个仓库为部分统计';
   if (failedCount > 0) summaryText += '，' + failedCount + ' 个仓库查询失败';
   summaryText += '（点击汇总行查看详情）';
   document.getElementById('results-summary').textContent = summaryText;
@@ -2824,6 +2943,25 @@ function scheduleAutoSaveToken(platform) {
   }, 500);
 }
 
+async function clearPRCache() {
+  var statusEl = document.getElementById('cache-clear-status');
+  if (!confirm('确定要清除所有已缓存的 PR 数据吗？\n清除后下次查询将重新从 API 获取。')) return;
+  statusEl.textContent = '清除中...';
+  statusEl.style.color = 'var(--text-secondary)';
+  try {
+    var backend = await CacheStore._getBackend();
+    await backend.clear();
+    // Also reset in-memory backend reference so next query gets fresh backend
+    CacheStore._backend = null;
+    CacheStore._backendPromise = null;
+    statusEl.textContent = '✓ 缓存已清除';
+    statusEl.style.color = '#30d158';
+  } catch (err) {
+    statusEl.textContent = '✗ 清除失败: ' + (err.message || err);
+    statusEl.style.color = '#ff453a';
+  }
+}
+
 function clearToken(platform) {
   var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
   document.getElementById(inputId).value = '';
@@ -2978,6 +3116,9 @@ function deleteUser(index) {
 
 // ========== Repo Management (config tab) ==========
 
+// In-memory cache for branch lists (avoid repeated API calls)
+var branchCache = {};
+
 function renderRepos() {
   var config = Storage.loadConfig();
   var repos = config.repositories || [];
@@ -2987,17 +3128,174 @@ function renderRepos() {
     return;
   }
   var html = '<table style="width:100%;font-size:.85rem;"><tbody>';
-  repos.forEach(function(url, i) {
-    var parsed = parseRepoUrl(url);
+  repos.forEach(function(r, i) {
+    var entry = normalizeRepoEntry(r);
+    var parsed = parseRepoUrl(entry.url);
     var badge = parsed ? ('<span class="status status-ok" style="font-size:.75rem;">' + parsed.platform + '</span>') : '';
-    html += '<tr><td>' + badge + ' ' + escapeHtml(url) + '</td>' +
-      '<td class="actions" style="text-align:right;"><button class="btn btn-sm btn-danger" onclick="removeRepo(' + i + ')">删除</button></td></tr>';
+    var branchDisplay = entry.branch || '(自动检测)';
+    html += '<tr>' +
+      '<td>' + badge + ' ' + escapeHtml(parsed ? (parsed.owner + '/' + parsed.repo) : entry.url) + '</td>' +
+      '<td style="white-space:nowrap;width:1%;padding-right:4px;">' +
+        '<div class="branch-combobox" data-index="' + i + '">' +
+          '<input class="branch-combobox-input" value="' + escapeHtml(branchDisplay) + '"' +
+            ' placeholder="输入筛选..." data-index="' + i + '" data-branch="' + escapeHtml(entry.branch) + '"' +
+            ' onfocus="openBranchCombobox(' + i + ', this)" oninput="filterBranchCombobox(' + i + ', this)">' +
+          '<div class="branch-combobox-list" id="branch-dropdown-' + i + '"></div>' +
+        '</div>' +
+      '</td>' +
+      '<td class="actions" style="white-space:nowrap;width:1%;"><button class="btn btn-sm btn-danger" onclick="removeRepo(' + i + ')">删除</button></td>' +
+      '</tr>';
   });
   html += '</tbody></table>';
   container.innerHTML = html;
 }
 
-function addRepo() {
+function changeRepoBranch(index, branch) {
+  var config = Storage.loadConfig();
+  var entry = normalizeRepoEntry(config.repositories[index]);
+  entry.branch = branch;
+  config.repositories[index] = entry;
+  Storage.saveConfig(config);
+}
+
+// Branch combobox: filterable dropdown replacing native <select>
+var _branchComboboxLoading = {};
+
+async function openBranchCombobox(index, inputEl) {
+  var listEl = document.getElementById('branch-dropdown-' + index);
+  if (!listEl) return;
+
+  // Load branches if not cached
+  var config = Storage.loadConfig();
+  var entry = normalizeRepoEntry(config.repositories[index]);
+  var parsed = parseRepoUrl(entry.url);
+  if (!parsed) return;
+  var cacheKey = parsed.platform + ':' + parsed.owner + '/' + parsed.repo;
+
+  if (!branchCache[cacheKey] && !_branchComboboxLoading[cacheKey]) {
+    var token = parsed.platform === 'github' ? config.githubToken : config.gitcodeToken;
+    if (!token) return;
+    _branchComboboxLoading[cacheKey] = true;
+    listEl.innerHTML = '<div class="branch-combobox-item no-match">加载中...</div>';
+    listEl.classList.add('open');
+    try {
+      var provider = parsed.platform === 'github' ? GitHubProvider : GitCodeProvider;
+      var result = await provider.listBranches(token, parsed.owner, parsed.repo);
+      branchCache[cacheKey] = result.branches;
+    } catch(e) {
+      listEl.innerHTML = '<div class="branch-combobox-item no-match">加载失败</div>';
+      _branchComboboxLoading[cacheKey] = false;
+      return;
+    }
+    _branchComboboxLoading[cacheKey] = false;
+  }
+
+  // Select all text for easy filtering
+  inputEl.select();
+  renderBranchDropdown(index, '', entry.branch);
+  listEl.classList.add('open');
+}
+
+function filterBranchCombobox(index, inputEl) {
+  var filter = inputEl.value.trim().toLowerCase();
+  var config = Storage.loadConfig();
+  var entry = normalizeRepoEntry(config.repositories[index]);
+  renderBranchDropdown(index, filter, entry.branch);
+  var listEl = document.getElementById('branch-dropdown-' + index);
+  if (listEl) listEl.classList.add('open');
+}
+
+function renderBranchDropdown(index, filter, currentBranch) {
+  var listEl = document.getElementById('branch-dropdown-' + index);
+  if (!listEl) return;
+
+  var config = Storage.loadConfig();
+  var entry = normalizeRepoEntry(config.repositories[index]);
+  var parsed = parseRepoUrl(entry.url);
+  if (!parsed) return;
+  var cacheKey = parsed.platform + ':' + parsed.owner + '/' + parsed.repo;
+  var branches = branchCache[cacheKey];
+  if (!branches) return;
+
+  // Ensure current branch is in the list
+  var allBranches = branches.slice();
+  if (currentBranch && allBranches.indexOf(currentBranch) === -1) {
+    allBranches.unshift(currentBranch);
+  }
+
+  // Filter: prefix match first, then contains match
+  var filtered;
+  if (filter) {
+    var prefix = [], contains = [];
+    allBranches.forEach(function(b) {
+      var lower = b.toLowerCase();
+      if (lower.indexOf(filter) === 0) prefix.push(b);
+      else if (lower.indexOf(filter) >= 0) contains.push(b);
+    });
+    filtered = prefix.concat(contains);
+  } else {
+    filtered = allBranches;
+  }
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div class="branch-combobox-item no-match">无匹配分支</div>';
+    return;
+  }
+
+  var html = '';
+  filtered.forEach(function(b) {
+    var cls = b === currentBranch ? 'branch-combobox-item selected' : 'branch-combobox-item';
+    html += '<div class="' + cls + '" onmousedown="selectBranchOption(' + index + ', \'' + escapeHtml(b).replace(/'/g, "\\'") + '\')">' + escapeHtml(b) + '</div>';
+  });
+  listEl.innerHTML = html;
+}
+
+function selectBranchOption(index, branch) {
+  changeRepoBranch(index, branch);
+  // Update input display
+  var combobox = document.querySelector('.branch-combobox[data-index="' + index + '"]');
+  if (combobox) {
+    var input = combobox.querySelector('.branch-combobox-input');
+    if (input) {
+      input.value = branch;
+      input.dataset.branch = branch;
+    }
+    var listEl = combobox.querySelector('.branch-combobox-list');
+    if (listEl) listEl.classList.remove('open');
+  }
+}
+
+function closeBranchComboboxes(exceptIndex) {
+  document.querySelectorAll('.branch-combobox-list.open').forEach(function(el) {
+    var idx = el.id.replace('branch-dropdown-', '');
+    if (String(idx) !== String(exceptIndex)) {
+      el.classList.remove('open');
+      // Restore display value if input was mid-filter
+      var combobox = el.closest('.branch-combobox');
+      if (combobox) {
+        var input = combobox.querySelector('.branch-combobox-input');
+        if (input) {
+          var saved = input.dataset.branch;
+          input.value = saved || '(自动检测)';
+        }
+      }
+    }
+  });
+}
+
+// Close dropdowns on outside click; restore input value on blur
+document.addEventListener('mousedown', function(e) {
+  if (!e.target.closest('.branch-combobox')) {
+    closeBranchComboboxes(-1);
+  }
+});
+document.addEventListener('focusin', function(e) {
+  if (!e.target.closest('.branch-combobox')) {
+    closeBranchComboboxes(-1);
+  }
+});
+
+async function addRepo() {
   var input = document.getElementById('new-repo-url');
   var url = input.value.trim();
   if (!url) return;
@@ -3006,11 +3304,21 @@ function addRepo() {
   var config = Storage.loadConfig();
   // Dedup
   var existing = config.repositories.some(function(r) {
-    var p = parseRepoUrl(r);
+    var entry = normalizeRepoEntry(r);
+    var p = parseRepoUrl(entry.url);
     return p && p.platform === parsed.platform && p.owner === parsed.owner && p.repo === parsed.repo;
   });
   if (existing) { alert('该仓库已存在'); return; }
-  config.repositories.push(url);
+  // Detect default branch
+  var branch = 'main';
+  var token = parsed.platform === 'github' ? config.githubToken : config.gitcodeToken;
+  if (token) {
+    try {
+      var provider = parsed.platform === 'github' ? GitHubProvider : GitCodeProvider;
+      branch = await provider.getDefaultBranch(token, parsed.owner, parsed.repo);
+    } catch(e) { /* fallback to main */ }
+  }
+  config.repositories.push({ url: url, branch: branch });
   Storage.saveConfig(config);
   input.value = '';
   renderRepos();
@@ -3168,8 +3476,9 @@ function refreshFilterDropdowns() {
   var repoSelect = document.getElementById('stat-repo');
   var currentRepo = repoSelect.value;
   var uniqueRepos = {};
-  (config.repositories || []).forEach(function(url) {
-    var parsed = parseRepoUrl(url);
+  (config.repositories || []).forEach(function(r) {
+    var entry = normalizeRepoEntry(r);
+    var parsed = parseRepoUrl(entry.url);
     if (!parsed) return;
     if (platform && parsed.platform !== platform) return;
     var rk = parsed.owner + '/' + parsed.repo;

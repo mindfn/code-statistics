@@ -32,6 +32,7 @@ created: 2026-07-25
 | F002 Comments / Approve 与三类详情 | `b4b57a5` | 122 passed | sol APPROVE，Pages 验收通过 |
 | 最终 UI、导出诊断、Token 保存与隐私说明 | `876bec3` | 137 passed | kimi APPROVE，Pages 验收通过 |
 | F003 已合入 PR 缓存与查询加速 | `b3b877a` | 222 passed | kimi + Opus APPROVE；PR #1 已合入，Pages release gate open |
+| 完整性 bug 修复 + 分支配置 + since 优化 + 缓存清除 + 分支筛选 | (pending) | 254 passed | Pages 部署中 |
 
 本文创建时线上生产基线为 `876bec3`。后续发布应把新的最终 SHA、测试数量和线上验收结果补到本表或后续变更记录中。
 
@@ -89,8 +90,9 @@ code-statistics.users.v1
   githubToken: "…",
   gitcodeToken: "…",
   repositories: [
-    "https://github.com/owner/repo",
-    "https://gitcode.com/owner/repo"
+    { url: "https://github.com/owner/repo", branch: "main" },
+    { url: "https://gitcode.com/owner/repo", branch: "" }
+    // 旧格式纯字符串仍兼容，normalizeRepoEntry() 自动迁移
   ]
 }
 

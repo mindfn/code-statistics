@@ -41,7 +41,9 @@ created: 2026-07-24
 
 - GitHub Token、GitCode Token 的录入、掩码显示、保存和清除。
 - 分平台“测试连接”，显示成功账户、认证失败、限流或网络/代理错误。
-- 代理只说明“沿用操作系统/浏览器代理”，并提示必须能访问：
+- 仓库管理：添加/删除仓库，每个仓库可选择目标分支（默认自动检测）；分支选择器支持前缀匹配过滤。
+- 数据管理：一键清除已缓存的 PR 数据（IndexedDB），无需清除整个浏览器缓存。
+- 代理只说明”沿用操作系统/浏览器代理”，并提示必须能访问：
   - `https://api.github.com`
   - `https://api.gitcode.com`
 - Token 仅保存在浏览器 `localStorage`，不进入日志、CSV 或 JSON 导出。
@@ -96,10 +98,10 @@ user_key,display_name,email,github_login,gitcode_login,repository_url,enabled
 
 1. 使用官方基址 `https://api.gitcode.com/api/v5`。
 2. `GET /repos/{owner}/{repo}` 获取默认分支。
-3. `GET /repos/{owner}/{repo}/pulls?state=merged&base={default_branch}&page=...&per_page=100` 分页读取。
-4. 不以 `since` 作为精确合并时间口径；在浏览器中按 `merged_at` 做最终范围过滤。
+3. `GET /repos/{owner}/{repo}/pulls?state=merged&base={default_branch}&sort=updated&direction=desc&since={startDate-14d}&page=...&per_page=100` 分页读取；`since=` 按更新时间（非合并时间）过滤，缓冲 14 天避免遗漏边界 PR。
+4. 最终以 `merged_at` 做精确范围过滤，`since=` 只用于减少列表请求量。
 5. 从 PR 返回字段及 `/pulls/{number}/files` 获取、校验代码量和变更文件数。
-6. 遇到 `too_large`、文件列表不完整或字段不可解析时标记“部分统计”，不能按 0 计。
+6. `too_large` 仅表示 diff 文本被截断，若行数可解析则不影响完整性；仅字段不可解析（NaN）时标记”部分统计”，不按 0 计。
 
 ### 本地数据与模块边界
 
@@ -239,6 +241,9 @@ operator 已明确要求“只要三个管理页签”，采用以下功能线�
 | KD-3 | 统计口径固定为 merged + `merged_at` + PR 作者 + 默认分支 | operator 明确确认，且避免重复与归属歧义 | 2026-07-24 |
 | KD-4 | 不做跨平台镜像去重 | 缺少可靠的跨平台 PR 共同标识，operator 已接受 | 2026-07-24 |
 | KD-5 | GitCode 默认分支使用 `base` 参数并本地复核 | `target_branch` 实测被忽略；`base` 实测生效 | 2026-07-24 |
+| KD-6 | 仓库配置支持选择目标分支 | 默认自动检测，可手动指定；分支选择器支持前缀匹配过滤 | 2026-07-27 |
+| KD-7 | GitCode `since=` 优化列表请求 | 14 天缓冲（按更新时间过滤），最终以 `merged_at` 精确过滤 | 2026-07-27 |
+| KD-8 | `too_large` 不再触发 partial | `too_large` 仅表示 diff 截断，行数可解析则完整；只有 NaN 触发 partial | 2026-07-27 |
 
 ## Timeline
 
@@ -248,6 +253,7 @@ operator 已明确要求“只要三个管理页签”，采用以下功能线�
 | 2026-07-24 | F001 立项并交由 opus 开发 |
 | 2026-07-24 | `6523cc0` 经 sol review APPROVE（65 passed），F001 标记 done |
 | 2026-07-25 | F002 在 F001 上增加协作活动统计；`876bec3` 完成最终 UI、导出诊断、Token 保存与隐私说明收尾（137 passed） |
+| 2026-07-27 | 完整性 bug 修复（propagation / too_large / listing-level warning）、仓库分支配置、GitCode since= 优化、PR 缓存清除按钮、分支可筛选 combobox（254 passed） |
 
 ## Review Gate
 

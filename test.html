@@ -771,6 +771,7 @@ document.getElementById('app-frame').addEventListener('load', async function() {
       }]);
     }
     if (url.indexOf('/files') >= 0) {
+      // too_large means diff text truncated, but counts are valid → full
       return Promise.resolve([{ additions: 1, deletions: 1, too_large: true }]);
     }
     return Promise.resolve({ additions: null, deletions: null, changed_files: null });
@@ -780,9 +781,33 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     new AbortController().signal, function(){}, { get: function(){ return Promise.resolve(null); } }
   );
   app.GitCodeProvider._fetch = corePartialGcOriginalFetch;
-  assert(gcCorePartialResult.partial === true, 'GitCode too_large marks repository partial');
+  // too_large with valid counts is now full (diff text truncated ≠ counts missing)
+  assert(gcCorePartialResult.partial === false, 'GitCode too_large with valid counts is full');
+  assertEqual(gcCorePartialResult.prs[0].completeness, 'full', 'too_large PR with valid counts = full');
+
+  // GitCode truly unparsable counts → partial
+  suite('GitCode unparsable file counts');
+  var gcUnparsableFetch = app.GitCodeProvider._fetch;
+  app.GitCodeProvider._fetch = function(url) {
+    if (url.indexOf('/pulls?') >= 0) {
+      return Promise.resolve([{
+        number: 88, title: 'Unparsable', user: { login: 'alice' },
+        merged_at: '2026-07-20T00:00:00Z', base: { ref: 'main' }
+      }]);
+    }
+    if (url.indexOf('/files') >= 0) {
+      return Promise.resolve([{ additions: null, deletions: null }]);
+    }
+    return Promise.resolve({ additions: null, deletions: null, changed_files: null });
+  };
+  var gcUnparsableResult = await app.GitCodeProvider.fetchMergedPRs(
+    'tok', 'org', 'repo', 'main', '2026-07-01', '2026-07-31',
+    new AbortController().signal, function(){}, { get: function(){ return Promise.resolve(null); } }
+  );
+  app.GitCodeProvider._fetch = gcUnparsableFetch;
+  assert(gcUnparsableResult.partial === true, 'GitCode unparsable counts marks partial');
   assert(
-    gcCorePartialResult.partialReason.indexOf('1 个 PR 代码量不完整') >= 0,
+    gcUnparsableResult.partialReason.indexOf('1 个 PR 代码量不完整') >= 0,
     'GitCode partial reason reports incomplete PR count'
   );
 
@@ -1025,6 +1050,53 @@ document.getElementById('app-frame').addEventListener('load', async function() {
     assert(changes === r.additions + r.deletions, 'changes = additions + deletions for ' + r.userKey);
   });
 
+  // --- Per-user completeness: PR-metric partial should NOT propagate to unrelated users ---
+  suite('Per-user completeness propagation');
+  var compActivities = [
+    // alice authored a partial PR
+    { platform: 'gitcode', repository: 'org/repo', actor_login: 'alice', user_key: 'alice', display_name: 'Alice', matched: true, activity_type: 'development', additions: 10, deletions: 5, changed_files: 1, completeness: 'partial', partial_reason: 'too_large' },
+    // bob authored a full PR — should NOT be marked partial
+    { platform: 'gitcode', repository: 'org/repo', actor_login: 'bob', user_key: 'bob', display_name: 'Bob', matched: true, activity_type: 'development', additions: 100, deletions: 50, changed_files: 3, completeness: 'full' },
+    // carol has a comment in the same repo — should NOT be marked partial
+    { platform: 'gitcode', repository: 'org/repo', actor_login: 'carol', user_key: 'carol', display_name: 'Carol', matched: true, activity_type: 'comment', completeness: 'full' }
+  ];
+  // Simulate: NO repo_partial flag (listing was complete, only individual PR was partial)
+  var compAgg = aggregate(compActivities);
+  var compAlice = compAgg.find(function(r) { return r.userKey === 'alice'; });
+  var compBob = compAgg.find(function(r) { return r.userKey === 'bob'; });
+  var compCarol = compAgg.find(function(r) { return r.userKey === 'carol'; });
+  assert(compAlice && compAlice.hasPartial === true, 'alice with partial PR shows hasPartial');
+  assertEqual(app.StatsEngine.completenessLabel(compAlice), '部分', 'alice completeness label is 部分');
+  assert(compBob && compBob.hasPartial === false, 'bob with full PR does NOT show hasPartial');
+  assertEqual(app.StatsEngine.completenessLabel(compBob), '完整', 'bob completeness label is 完整');
+  assert(compCarol && compCarol.hasPartial === false, 'carol commenter does NOT show hasPartial');
+  assertEqual(app.StatsEngine.completenessLabel(compCarol), '完整', 'carol completeness label is 完整');
+
+  // repo_partial is no longer used in aggregate — listing-level issues
+  // are shown via the listing-warning banner, not per-user badges.
+  // Verify aggregate ignores repo_partial even if someone sets it.
+  var compActListing = compActivities.map(function(a) {
+    var c = Object.assign({}, a);
+    c.repo_partial = true; // should be ignored
+    return c;
+  });
+  var compAggListing = aggregate(compActListing);
+  var listBob = compAggListing.find(function(r) { return r.userKey === 'bob'; });
+  var listCarol = compAggListing.find(function(r) { return r.userKey === 'carol'; });
+  assert(listBob && listBob.hasPartial === false, 'repo_partial ignored: bob stays complete');
+  assert(listCarol && listCarol.hasPartial === false, 'repo_partial ignored: carol stays complete');
+
+  // --- normalizeRepoEntry backward compat ---
+  suite('normalizeRepoEntry');
+  var nre1 = app.normalizeRepoEntry('https://github.com/org/repo');
+  assertEqual(nre1.url, 'https://github.com/org/repo', 'string → url preserved');
+  assertEqual(nre1.branch, '', 'string → branch empty');
+  var nre2 = app.normalizeRepoEntry({ url: 'https://github.com/a/b', branch: 'develop' });
+  assertEqual(nre2.url, 'https://github.com/a/b', 'object → url preserved');
+  assertEqual(nre2.branch, 'develop', 'object → branch preserved');
+  var nre3 = app.normalizeRepoEntry({ url: 'https://github.com/a/b' });
+  assertEqual(nre3.branch, '', 'missing branch → empty string');
+
   // --- Request dedup: buildRepoList from config repos ---
   suite('Request dedup');
   var configRepos = [
@@ -1034,6 +1106,65 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   ];
   var repoList = app.StatsEngine.buildRepoList(configRepos, {});
   assertEqual(repoList.length, 2, 'duplicate repo URLs → deduplicated to 2');
+
+  // buildRepoList handles new {url, branch} format
+  suite('buildRepoList with branch config');
+  var branchRepos = [
+    { url: 'https://github.com/org/repo', branch: 'develop' },
+    'https://gitcode.com/org/other'
+  ];
+  var branchList = app.StatsEngine.buildRepoList(branchRepos, {});
+  assertEqual(branchList.length, 2, 'mixed format repos deduplicated');
+  var ghEntry = branchList.find(function(r) { return r.platform === 'github'; });
+  assertEqual(ghEntry.branch, 'develop', 'configured branch carried through');
+  var gcEntry = branchList.find(function(r) { return r.platform === 'gitcode'; });
+  assertEqual(gcEntry.branch, '', 'legacy string has empty branch');
+
+  // Branch combobox filter test
+  suite('Branch combobox filter');
+
+  // Setup: seed branchCache and a config repo so renderBranchDropdown works
+  var filterTestKey = 'github:test-owner/test-repo';
+  app.branchCache = app.branchCache || {};
+  app.branchCache[filterTestKey] = ['main', 'develop', 'fix/bug-1', 'fix/bug-2', 'feature/auth', 'feature/main-page', 'release/v1'];
+  // Save a temp config with one repo
+  var prevConfig = app.Storage.loadConfig();
+  var filterTestConfig = JSON.parse(JSON.stringify(prevConfig));
+  filterTestConfig.repositories = [{ url: 'https://github.com/test-owner/test-repo', branch: 'main' }];
+  app.Storage.saveConfig(filterTestConfig);
+
+  // Create a temporary dropdown container in the iframe
+  var filterDropdown = app.document.createElement('div');
+  filterDropdown.className = 'branch-combobox-list';
+  filterDropdown.id = 'branch-dropdown-0';
+  app.document.body.appendChild(filterDropdown);
+
+  // No filter: all 7 branches
+  app.renderBranchDropdown(0, '', 'main');
+  assertEqual(filterDropdown.querySelectorAll('.branch-combobox-item').length, 7, 'no filter shows all branches');
+  assert(filterDropdown.querySelector('.branch-combobox-item.selected').textContent === 'main', 'current branch marked selected');
+
+  // Prefix filter "fix" → fix/bug-1, fix/bug-2
+  app.renderBranchDropdown(0, 'fix', 'main');
+  var fixItems = filterDropdown.querySelectorAll('.branch-combobox-item:not(.no-match)');
+  assertEqual(fixItems.length, 2, 'prefix "fix" matches 2 branches');
+
+  // Filter "main" → prefix "main" first, then contains "feature/main-page"
+  app.renderBranchDropdown(0, 'main', 'main');
+  var mainItems = filterDropdown.querySelectorAll('.branch-combobox-item:not(.no-match)');
+  assertEqual(mainItems.length, 2, '"main" matches prefix + contains');
+  assertEqual(mainItems[0].textContent, 'main', 'prefix match comes first');
+  assertEqual(mainItems[1].textContent, 'feature/main-page', 'contains match comes second');
+
+  // No match
+  app.renderBranchDropdown(0, 'zzz', 'main');
+  var noItems = filterDropdown.querySelectorAll('.branch-combobox-item.no-match');
+  assertEqual(noItems.length, 1, 'no match shows placeholder');
+
+  // Cleanup
+  app.document.body.removeChild(filterDropdown);
+  app.Storage.saveConfig(prevConfig);
+  delete app.branchCache[filterTestKey];
 
   // --- FCR-3: disabled users must not get attribution ---
   suite('Disabled user exclusion (FCR-3)');
@@ -1068,7 +1199,49 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   var ghResult = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
   ghProvider._fetch = ghOrigFetch2;
   assert(ghResult.partial === true, 'incomplete_results=true → partial=true');
+  assert(ghResult.listingIncomplete === true, 'incomplete_results=true → listingIncomplete=true');
   assert(ghResult.partialReason && ghResult.partialReason.indexOf('不完整') >= 0, 'partialReason mentions incompleteness');
+
+  // FCR-4b: GitHub PR-metric partial should NOT set listingIncomplete
+  suite('GitHub PR-metric partial vs listing partial');
+  var ghOrigFetch2b = ghProvider._fetch;
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({
+        total_count: 1, incomplete_results: false,
+        items: [{ number: 99 }]
+      });
+    }
+    // PR detail with unparsable additions → metric-level partial
+    return Promise.resolve({
+      number: 99, merged_at: '2026-01-15T10:00:00Z', title: 'T',
+      user: { login: 'testuser' }, base: { ref: 'main' },
+      additions: null, deletions: 5, changed_files: 2
+    });
+  };
+  var ghMetricResult = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch2b;
+  assert(ghMetricResult.partial === true, 'unparsable metric → partial=true');
+  assert(ghMetricResult.listingIncomplete === false, 'unparsable metric → listingIncomplete stays false');
+
+  // GitCode listingIncomplete is always false
+  suite('GitCode listingIncomplete');
+  var gcOrigFetch3 = gcProvider._fetch;
+  gcProvider._fetch = function(url) {
+    if (url.indexOf('/pulls?') >= 0) {
+      return Promise.resolve([{
+        number: 10, merged_at: '2026-01-15T10:00:00Z', title: 'T',
+        user: { login: 'test' }, base: { ref: 'main' }, html_url: 'https://gitcode.com/test'
+      }]);
+    }
+    // PR detail
+    return Promise.resolve({
+      number: 10, additions: 10, deletions: 2, changed_files: 1
+    });
+  };
+  var gcResult = await gcProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
+  gcProvider._fetch = gcOrigFetch3;
+  assert(gcResult.listingIncomplete === false, 'GitCode listingIncomplete is always false');
 
   // --- FCR-5: GitHub unparsable metrics behavioral test ---
   suite('GitHub unparsable metrics (FCR-5)');
@@ -1297,6 +1470,22 @@ document.getElementById('app-frame').addEventListener('load', async function() {
   // Collapse detail by clicking the same row again
   app.selectSummaryRow(rows[0]);
   assert(detailSection.classList.contains('hidden'), 'detail section hidden after second click');
+
+  // ==================== clearPRCache ====================
+  suite('clearPRCache');
+
+  // Seed a cache entry, then clear
+  var clearBackend = app.CacheStore.createMemoryBackend();
+  var clearStore = app.CacheStore.create(clearBackend);
+  await clearBackend.put('test-key', { v: 1 });
+  var beforeClear = await clearBackend.get('test-key');
+  assert(beforeClear !== null, 'cache has entry before clear');
+  await clearBackend.clear();
+  var afterClear = await clearBackend.get('test-key');
+  assert(afterClear === null, 'cache entry removed after clear');
+
+  // Verify clearPRCache function is exposed
+  assert(typeof app.clearPRCache === 'function', 'clearPRCache is exposed');
 
   // ==================== Render Results ====================
   renderTestResults();

@@ -14,7 +14,7 @@
 
 ## 快速开始
 
-1. **配置** — 填入 GitHub / GitCode 的 Token，点击“测试并保存”；验证成功后 Token 会自动保存到当前浏览器。在“仓库管理”中添加需要统计的仓库。
+1. **配置** — 填入 GitHub / GitCode 的 Token，点击”测试并保存”；验证成功后 Token 会自动保存到当前浏览器。在”仓库管理”中添加需要统计的仓库，可为每个仓库选择目标分支（默认自动检测，分支列表支持输入过滤）。
 2. **用户** — 添加需要统计的用户及其平台账号（手工新增或 CSV 导入），启用/禁用通过开关控制。
 3. **统计数据** — 选择时间范围和用户范围（已匹配/全部/仅未匹配），点击"查询"；汇总表展示开发 PR 数、Comments 数、Approve 数及代码量；点击汇总行可在"开发 PR / Comments / 审核 PR"三个标签间切换查看详情，可导出 CSV。
 
@@ -34,7 +34,7 @@ Token 仅保存在浏览器 `localStorage`，不会进入导出的 CSV、日志�
 
 - **无自建后端上传路径** — GitHub Pages 只托管静态文件，不接收 Token、用户信息、仓库配置或统计结果。仍应只在可信设备和可信浏览器环境中使用。
 - **已合入 PR 缓存在本机** — 通过 GitHub Pages 或其他 `http(s)` 地址使用时，完整的 PR 代码量、Comments 和 Approve 会按 PR 保存在浏览器 IndexedDB；它们不会上传到本工具的服务器。直接双击 `file://` 打开时只使用当前页面内存缓存，关闭页面后失效。
-- **清除浏览器数据会同时清除配置与缓存** — 如果你清除了浏览器的站点数据，之前导入或手动添加的用户和仓库配置及已合入 PR 缓存会一同被清除。当前版本没有一键导出用户配置，建议保留原始导入 CSV；“下载模板”只包含表头和示例行，不是备份。
+- **清除 PR 缓存** — 配置页”数据管理”提供”清除 PR 缓存”按钮，可一键清除 IndexedDB 中已缓存的 PR 数据，不影响配置和用户信息。如需完全重置，清除浏览器站点数据会同时清除全部配置和缓存。当前版本没有一键导出用户配置，建议保留原始导入 CSV；”下载模板”只包含表头和示例行，不是备份。
 - **多设备不同步** — 由于数据存储在本地浏览器，不同设备或不同浏览器之间的数据不会自动同步。可在另一设备重新导入保留的用户 CSV；Token 和仓库列表需要重新配置。
 
 ## 网络与代理
@@ -95,7 +95,8 @@ user_key,display_name,email,github_login,gitcode_login
 | GitHub 搜索上限 | 单次搜索最多返回 1000 个 PR。超出时页面标记"部分统计"，建议缩小时间范围 |
 | 请求量增长 | 首次查询仍需读取每个入选 PR 的 Comments / Reviews；实际网络请求由平台级预算限制为 GitHub 8、GitCode 16，并保留分页、限流和错误传播 |
 | GitCode 当前有效 Approve | GitCode 公开 API 没有完整审批历史，仅按 PR 详情中当前 `accept=true` 统计，不表示历史审批动作次数 |
-| GitCode 大文件 PR | 文件过大时 GitCode 返回 `too_large`，该 PR 标记"部分统计"，不会按 0 计算 |
+| GitCode 大文件 PR | 文件过大时 GitCode 返回 `too_large`（diff 文本截断）；若行数可解析则不影响完整性，仅字段不可解析时标记"部分统计" |
+| GitCode 列表优化 | 使用 `since=` 按更新时间过滤（缓冲 14 天），减少历史 PR 较多仓库的请求量；最终以 `merged_at` 精确过滤 |
 | 浏览器兼容 | 推荐最新版 Chrome / Edge。Safari 和 Firefox 在 `file://` 下的 localStorage 行为可能不同 |
 | 无应用内代理 | 浏览器 `fetch` 不支持为单次请求指定代理，只能沿用系统/浏览器代理 |
 | `file://` 缓存 | 当前 Chrome 在 `file://` 下无法可靠打开 IndexedDB，因此双击运行只提供页面内存缓存；需要跨重开复用 PR 缓存时请使用 GitHub Pages |
@@ -106,7 +107,7 @@ user_key,display_name,email,github_login,gitcode_login
 ## 技术说明
 
 - 单个 `index.html`，所有 HTML / CSS / JavaScript 内联，无 CDN、无第三方依赖
-- `localStorage` 持久化配置和用户数据（Key: `code-statistics.config.v1` / `code-statistics.users.v1`）
+- `localStorage` 持久化配置和用户数据（Key: `code-statistics.config.v1` / `code-statistics.users.v1`）；仓库配置支持 `{url, branch}` 格式，旧字符串格式自动迁移
 - IndexedDB 按 `platform + repository + PR number` 持久化完整已合入 PR；schema 不匹配、损坏、partial 或 failed 条目均视为 miss
 - GitHub API: Search Issues + Pull Request Detail + Issue Comments + Review Comments + Reviews；代码包含分页、请求级并发预算、限流等待和部分结果标记
 - GitCode API v5: Pull Request List + Detail/Files + Comments；代码包含分页、请求级并发预算、限流报错和字段完整性检查
