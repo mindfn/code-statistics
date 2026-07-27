@@ -11,4 +11,4 @@ created: 2026-07-24
 
 | ID | Name | Status | Owner | Link |
 |----|------|--------|-------|------|
-| F001 | GitHub / GitCode PR 代码变更统计 | done | opus | [F001](docs/features/F001-pr-code-statistics.md) |
+| F002 | GitHub / GitCode PR 协作活动统计 | done | kimi | [F002](docs/features/F002-pr-collaboration-statistics.md) |

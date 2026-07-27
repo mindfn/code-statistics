@@ -4,124 +4,307 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PR 代码变更统计</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%231d1d1f'/%3E%3Cpath d='M20 18v28M20 24h16a8 8 0 0 1 8 8v14' fill='none' stroke='%230a84ff' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='20' cy='18' r='6' fill='%23f5f5f7'/%3E%3Ccircle cx='20' cy='46' r='6' fill='%2330d158'/%3E%3Ccircle cx='44' cy='46' r='6' fill='%23f5f5f7'/%3E%3C/svg%3E">
 <style>
 /* ========== Reset & Variables ========== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f3f4f6; --card: #fff; --primary: #2563eb; --primary-hover: #1d4ed8;
-  --text: #1f2937; --text-2: #6b7280; --text-3: #9ca3af;
-  --border: #e5e7eb; --border-2: #d1d5db;
-  --success: #16a34a; --success-bg: #f0fdf4;
-  --warn: #d97706; --warn-bg: #fffbeb;
-  --error: #dc2626; --error-bg: #fef2f2;
-  --radius: 6px; --shadow: 0 1px 3px rgba(0,0,0,.08);
+  --bg: #161617;
+  --card: #1c1c1e;
+  --input-bg: #2c2c2e;
+  --primary: #0a84ff;
+  --primary-hover: #0070e3;
+  --text: #f5f5f7;
+  --text-2: #86868b;
+  --text-3: rgba(245, 245, 247, 0.5);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-2: rgba(255, 255, 255, 0.1);
+  --focus: #0a84ff;
+  --success: #30d158;
+  --warn: #ff9f0a;
+  --error: #ff453a;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --mono: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
 }
+
 html { font-size: 14px; }
-body { font-family: var(--font); color: var(--text); background: var(--bg); line-height: 1.6; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.25); }
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.5;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
 
 /* ========== Layout ========== */
-.app { max-width: 1200px; margin: 0 auto; padding: 16px; }
-.app-header { margin-bottom: 20px; }
-.app-header h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 12px; }
-.tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); }
-.tab { padding: 8px 20px; border: none; background: none; cursor: pointer; font-size: .95rem;
-  color: var(--text-2); border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color .15s, border-color .15s; }
+.app { max-width: 1340px; margin: 0 auto; padding: 32px; }
+.app-header { margin-bottom: 28px; }
+.app-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  letter-spacing: -0.01em;
+}
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.tab {
+  padding: 4px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: .85rem;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease-out;
+  font-weight: 500;
+}
 .tab:hover { color: var(--text); }
-.tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+.tab.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
 /* ========== Card ========== */
-.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
-.card h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: 12px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+.card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--text); }
 .card p { color: var(--text-2); margin-bottom: 8px; }
 .card ul { margin-left: 20px; color: var(--text-2); }
 .card ul li { margin-bottom: 4px; }
-.card code { font-family: var(--mono); font-size: .85rem; background: #f9fafb; padding: 2px 6px; border-radius: 3px; }
+.card code {
+  font-family: var(--mono);
+  font-size: .85rem;
+  background: var(--input-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text);
+}
 
 /* ========== Forms ========== */
 .form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.form-row label { min-width: 100px; font-weight: 500; flex-shrink: 0; }
+.form-row label { min-width: 100px; font-weight: 500; flex-shrink: 0; color: var(--text-2); font-size: .85rem; }
 .form-row input[type="text"], .form-row input[type="password"], .form-row input[type="email"],
 .form-row input[type="date"], .form-row select {
-  flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: var(--radius);
-  font-size: .9rem; font-family: var(--font); outline: none; transition: border-color .15s; }
-.form-row input:focus, .form-row select:focus { border-color: var(--primary); }
+  flex: 1; min-width: 180px; padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: .85rem; font-family: var(--font); outline: none;
+  background: var(--input-bg); color: var(--text);
+  transition: all 0.15s ease-out;
+}
+.form-row input:focus, .form-row select:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.3);
+}
 .form-row .token-display { font-family: var(--mono); font-size: .85rem; color: var(--text-2); margin-left: 4px; }
 
 /* ========== Buttons ========== */
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid var(--border-2);
-  border-radius: var(--radius); background: var(--card); color: var(--text); cursor: pointer;
-  font-size: .85rem; font-family: var(--font); transition: background .15s, border-color .15s; white-space: nowrap; }
-.btn:hover { background: #f9fafb; border-color: var(--text-3); }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+  border: none; border-radius: var(--radius-sm);
+  background: var(--input-bg); color: var(--text); cursor: pointer;
+  font-size: .85rem; font-family: var(--font);
+  transition: all 0.15s ease-out; white-space: nowrap;
+}
+.btn:hover { background: #3a3a3c; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.btn-primary { background: var(--primary); color: #fff; }
 .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
-.btn-danger { color: var(--error); border-color: var(--error); }
-.btn-danger:hover:not(:disabled) { background: var(--error-bg); }
-.btn-sm { padding: 3px 8px; font-size: .8rem; }
+.btn-danger { color: var(--error); background: rgba(255, 69, 58, 0.1); }
+.btn-danger:hover:not(:disabled) { background: rgba(255, 69, 58, 0.18); }
+.btn-sm { padding: 4px 10px; font-size: .8rem; }
 
 /* ========== Status ========== */
-.status { display: inline-flex; align-items: center; gap: 4px; font-size: .85rem; padding: 3px 8px; border-radius: 12px; }
-.status-ok { color: var(--success); background: var(--success-bg); }
-.status-warn { color: var(--warn); background: var(--warn-bg); }
-.status-err { color: var(--error); background: var(--error-bg); }
+.status { display: inline-flex; align-items: center; gap: 4px; font-size: .8rem; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
+.status-ok { color: var(--success); background: rgba(48, 209, 88, 0.12); }
+.status-warn { color: var(--warn); background: rgba(255, 159, 10, 0.12); }
+.status-err { color: var(--error); background: rgba(255, 69, 58, 0.12); }
 
 /* ========== Toolbar ========== */
 .toolbar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
 .toolbar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ========== Tables ========== */
-.table-wrap { overflow-x: auto; margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--radius); }
+.table-wrap {
+  overflow-x: auto; margin-bottom: 16px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card);
+}
 table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-thead th { background: #f9fafb; padding: 8px 10px; text-align: left; font-weight: 600;
-  border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
-tbody td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-tbody tr:hover { background: #f9fafb; }
+thead th {
+  background: var(--input-bg);
+  padding: 8px 12px; text-align: left; font-weight: 500;
+  border-bottom: 1px solid var(--border-2);
+  color: var(--text-2);
+  font-size: 0.8rem;
+  white-space: nowrap; position: sticky; top: 0; z-index: 1;
+}
+tbody td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--text); }
+tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
+tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
 tbody tr:last-child td { border-bottom: none; }
-td.num { text-align: right; font-family: var(--mono); font-size: .85rem; }
+td.num { text-align: right; font-family: var(--mono); font-size: .85rem; font-variant-numeric: tabular-nums; }
 td.actions { white-space: nowrap; }
-.empty-row td { text-align: center; color: var(--text-3); padding: 30px; }
-.completeness-full { color: var(--success); }
-.completeness-partial { color: var(--warn); }
-.completeness-failed { color: var(--error); }
+.empty-row td { text-align: center; color: var(--text-2); padding: 30px; }
+
+/* Additions / deletions coloring (summary columns shifted after collaboration columns) */
+#summary-tbody tr.summary-row td:nth-child(8).num { color: var(--success); }
+#summary-tbody tr.summary-row td:nth-child(9).num { color: var(--error); }
+#summary-tbody tr.summary-row td:nth-child(8).num::before { content: '+'; margin-right: 1px; }
+/* Detail development tab: additions/deletions columns */
+#detail-tbody tr td:nth-child(6).num { color: var(--success); }
+#detail-tbody tr td:nth-child(7).num { color: var(--error); }
+#detail-tbody tr td:nth-child(6).num::before { content: '+'; margin-right: 1px; }
+/* Active detail tab styling */
+.detail-tab.active { background: rgba(255, 255, 255, 0.15); color: var(--text); }
+
+.completeness-cell { text-align: center; vertical-align: middle; }
+.completeness-full {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--success); background: rgba(48, 209, 88, 0.12);
+  padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 500;
+}
+.completeness-partial {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--warn); background: rgba(255, 159, 10, 0.12);
+  padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 500;
+}
+.completeness-failed {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--error); background: rgba(255, 69, 58, 0.12);
+  padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 500;
+}
 
 /* ========== Filters ========== */
-.filters { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
-.filter-group { display: flex; flex-direction: column; gap: 3px; }
+.filters { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 0; }
+.filter-group { display: flex; flex-direction: column; gap: 4px; }
 .filter-group label { font-size: .8rem; color: var(--text-2); font-weight: 500; }
-.filter-group input, .filter-group select { padding: 6px 10px; border: 1px solid var(--border-2);
-  border-radius: var(--radius); font-size: .85rem; font-family: var(--font); outline: none; }
-.filter-group input:focus, .filter-group select:focus { border-color: var(--primary); }
+.filter-group input, .filter-group select {
+  padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: .85rem; font-family: var(--font); outline: none;
+  background: var(--input-bg); color: var(--text);
+  transition: all 0.15s ease-out;
+}
+.filter-group input:focus, .filter-group select:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.3);
+}
+.filter-actions {
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: 6px;
+}
+.filter-actions .btn { min-height: 34px; }
+
+/* ========== Local data notice ========== */
+.privacy-note {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(10, 132, 255, 0.24);
+  border-radius: var(--radius);
+  background: rgba(10, 132, 255, 0.07);
+}
+.privacy-note-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--primary);
+  background: rgba(10, 132, 255, 0.14);
+}
+.privacy-note-icon svg { width: 17px; height: 17px; }
+.privacy-note strong { display: block; margin-bottom: 3px; font-size: .9rem; }
+.privacy-note p { margin: 0; color: var(--text-2); font-size: .82rem; }
+.privacy-note p + p { margin-top: 4px; }
 
 /* ========== Progress ========== */
-.progress-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 16px; margin-bottom: 16px; }
-.progress-title { font-weight: 600; margin-bottom: 10px; }
+.progress-box {
+  background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+.progress-title { font-weight: 600; margin-bottom: 10px; color: var(--text); font-size: .9rem; }
 .progress-list { list-style: none; font-size: .85rem; }
-.progress-list li { padding: 4px 0; display: flex; align-items: center; gap: 8px; }
+.progress-list li { padding: 4px 0; display: flex; align-items: center; gap: 8px; color: var(--text-2); }
 .progress-list .icon { width: 18px; text-align: center; flex-shrink: 0; }
 
 /* ========== Dialog ========== */
-dialog { border: none; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.15); padding: 0;
-  max-width: 700px; width: 90vw; }
-dialog::backdrop { background: rgba(0,0,0,.3); }
-.dialog-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-.dialog-header h3 { font-size: 1rem; font-weight: 600; }
+dialog {
+  border: none; padding: 0;
+  max-width: 700px; width: 90vw; margin: auto;
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+  border-radius: 12px; overflow: hidden;
+}
+dialog::backdrop { backdrop-filter: blur(20px); background: rgba(0, 0, 0, 0.45); }
+.dialog-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.dialog-header h3 { font-size: 1rem; font-weight: 600; color: var(--text); }
 .dialog-body { padding: 20px; max-height: 60vh; overflow-y: auto; }
-.dialog-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
-.dialog-close { background: none; border: none; cursor: pointer; font-size: 1.2rem; color: var(--text-2); padding: 4px; }
+.dialog-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+.dialog-close { background: none; border: none; cursor: pointer; font-size: 1.2rem; color: var(--text-2); padding: 4px; transition: color .15s; }
+.dialog-close:hover { color: var(--text); }
 
 /* ========== Import Preview ========== */
-.import-summary { margin-bottom: 12px; font-size: .9rem; }
+.import-summary { margin-bottom: 12px; font-size: .9rem; color: var(--text); }
 .import-summary .ok { color: var(--success); font-weight: 500; }
 .import-summary .bad { color: var(--error); font-weight: 500; }
-.import-table tr.row-valid { background: var(--success-bg); }
-.import-table tr.row-invalid { background: var(--error-bg); }
+.import-table tr.row-valid { background: rgba(48, 209, 88, 0.08); }
+.import-table tr.row-invalid { background: rgba(255, 69, 58, 0.08); }
 .import-table .err-msg { color: var(--error); font-size: .8rem; }
+
+/* ========== Toggle Switch ========== */
+.toggle { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle .slider {
+  position: absolute; inset: 0;
+  background: #3a3a3c;
+  border-radius: 20px; transition: background .15s;
+}
+.toggle .slider::before {
+  content: ''; position: absolute; width: 16px; height: 16px; left: 2px; bottom: 2px;
+  background: #fff; border-radius: 50%; transition: transform .15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+.toggle input:checked + .slider { background: var(--success); }
+.toggle input:checked + .slider::before { transform: translateX(16px); }
 
 /* ========== Misc ========== */
 .text-muted { color: var(--text-2); }
@@ -130,34 +313,55 @@ dialog::backdrop { background: rgba(0,0,0,.3); }
 .mt-16 { margin-top: 16px; }
 .mb-8 { margin-bottom: 8px; }
 .hidden { display: none !important; }
-a { color: var(--primary); text-decoration: none; }
-a:hover { text-decoration: underline; }
-.checkbox-label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.checkbox-label input { width: 16px; height: 16px; }
+a { color: var(--primary); text-decoration: none; transition: color .15s; }
+a:hover { color: var(--primary-hover); text-decoration: underline; }
+.checkbox-label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-2); }
+.checkbox-label input { width: 16px; height: 16px; accent-color: var(--primary); }
 
 /* ========== Edit Form (in dialog) ========== */
 .edit-form .form-field { margin-bottom: 12px; }
-.edit-form .form-field label { display: block; font-weight: 500; margin-bottom: 4px; font-size: .85rem; }
+.edit-form .form-field label { display: block; font-weight: 500; margin-bottom: 4px; font-size: .85rem; color: var(--text-2); }
 .edit-form .form-field input, .edit-form .form-field select {
-  width: 100%; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: var(--radius);
-  font-size: .9rem; font-family: var(--font); outline: none; }
-.edit-form .form-field input:focus { border-color: var(--primary); }
+  width: 100%; padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: .85rem; font-family: var(--font); outline: none;
+  background: var(--input-bg); color: var(--text);
+  transition: all 0.15s ease-out;
+}
+.edit-form .form-field input:focus, .edit-form .form-field select:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.3);
+}
 .edit-form .form-field .hint { font-size: .8rem; color: var(--text-3); margin-top: 2px; }
 .edit-form .form-field .field-error { font-size: .8rem; color: var(--error); margin-top: 2px; }
 
-/* ========== Grand total row ========== */
-tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid var(--primary); }
+/* ========== Grand total & summary row ========== */
+tr.grand-total td {
+  font-weight: 600;
+  background: transparent;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  border-bottom: 3px double rgba(255, 255, 255, 0.15);
+  color: var(--text);
+}
+tr.summary-row { cursor: pointer; transition: background .15s; }
+tr.summary-row:hover td { background: rgba(255, 255, 255, 0.04); }
+tr.summary-row.selected td { background: rgba(255, 255, 255, 0.08); }
 
 /* ========== Responsive ========== */
 @media (max-width: 768px) {
-  .app { padding: 10px; }
+  .app { padding: 16px; }
+  .app-header h1 { font-size: 1.3rem; }
+  .tabs { display: flex; width: 100%; }
+  .tab { flex: 1; text-align: center; }
   .form-row { flex-direction: column; align-items: stretch; }
   .form-row label { min-width: auto; }
   .filters { flex-direction: column; }
   .filter-group { width: 100%; }
   .filter-group input, .filter-group select { width: 100%; }
-  .toolbar { flex-direction: column; }
+  .filter-actions { width: 100%; align-self: stretch; }
+  .filter-actions .btn { flex: 1; justify-content: center; }
+  .toolbar { flex-direction: column; align-items: stretch; }
   .toolbar-right { margin-left: 0; }
+  .card { padding: 16px; }
 }
 </style>
 </head>
@@ -166,15 +370,29 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
   <header class="app-header">
     <h1>PR 代码变更统计</h1>
     <nav class="tabs" id="tab-nav">
-      <button class="tab active" data-tab="config">配置</button>
-      <button class="tab" data-tab="users">用户信息</button>
-      <button class="tab" data-tab="stats">统计数据</button>
+      <button class="tab active" data-tab="stats">统计数据</button>
+      <button class="tab" data-tab="users">用户</button>
+      <button class="tab" data-tab="config">配置</button>
     </nav>
   </header>
 
   <main>
     <!-- ==================== 配置 ==================== -->
-    <section id="tab-config" class="tab-panel active">
+    <section id="tab-config" class="tab-panel">
+      <aside class="privacy-note" id="local-data-notice" role="note" aria-label="本地数据与隐私说明">
+        <span class="privacy-note-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M7 10V7a5 5 0 0 1 10 0v3M6 10h12v10H6z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12 14v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div>
+          <strong>配置数据仅保存在当前浏览器</strong>
+          <p>Token、用户和仓库配置保存在浏览器 <code>localStorage</code>，不会上传到本工具的服务器；Token 仅通过请求头直接发送给 GitHub / GitCode API，导出的 CSV 不包含 Token。</p>
+          <p>清除本网站的浏览器数据会同时清除全部配置，请勿在不受信任的公共设备上保存 Token。</p>
+        </div>
+      </aside>
+
       <div class="card">
         <h2>GitHub Token</h2>
         <div class="form-row">
@@ -186,7 +404,7 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
           <label></label>
           <button class="btn btn-primary btn-sm" onclick="saveToken('github')">保存</button>
           <button class="btn btn-danger btn-sm" onclick="clearToken('github')">清除</button>
-          <button class="btn btn-sm" onclick="testConnection('github')">测试连接</button>
+          <button class="btn btn-sm" onclick="testConnection('github')">测试并保存</button>
           <span id="github-status"></span>
         </div>
         <div class="form-row">
@@ -206,9 +424,19 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
           <label></label>
           <button class="btn btn-primary btn-sm" onclick="saveToken('gitcode')">保存</button>
           <button class="btn btn-danger btn-sm" onclick="clearToken('gitcode')">清除</button>
-          <button class="btn btn-sm" onclick="testConnection('gitcode')">测试连接</button>
+          <button class="btn btn-sm" onclick="testConnection('gitcode')">测试并保存</button>
           <span id="gitcode-status"></span>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>仓库管理</h2>
+        <p class="text-sm text-muted mb-8">添加需要统计的 GitHub / GitCode 仓库。所有用户的 PR 将从这些仓库中查询。</p>
+        <div class="form-row">
+          <input type="text" id="new-repo-url" placeholder="https://github.com/owner/repo" style="flex:2">
+          <button class="btn btn-primary btn-sm" onclick="addRepo()">添加</button>
+        </div>
+        <div id="repo-list" class="mt-8"></div>
       </div>
 
       <div class="card">
@@ -243,7 +471,6 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
               <th>邮箱</th>
               <th>GitHub 账号</th>
               <th>GitCode 账号</th>
-              <th>仓库地址</th>
               <th>启用</th>
               <th>操作</th>
             </tr>
@@ -254,7 +481,7 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
     </section>
 
     <!-- ==================== 统计数据 ==================== -->
-    <section id="tab-stats" class="tab-panel">
+    <section id="tab-stats" class="tab-panel active">
       <div class="card">
         <div class="filters">
           <div class="filter-group">
@@ -274,6 +501,14 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
             </select>
           </div>
           <div class="filter-group">
+            <label for="stat-user-type">用户范围</label>
+            <select id="stat-user-type">
+              <option value="matched">已匹配用户</option>
+              <option value="all">全部（含未匹配）</option>
+              <option value="unmatched">仅未匹配</option>
+            </select>
+          </div>
+          <div class="filter-group">
             <label for="stat-user">用户</label>
             <select id="stat-user"><option value="">全部</option></select>
           </div>
@@ -281,12 +516,9 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
             <label for="stat-repo">仓库</label>
             <select id="stat-repo"><option value="">全部</option></select>
           </div>
-          <div class="filter-group">
-            <label>&nbsp;</label>
-            <div style="display:flex;gap:6px;">
-              <button class="btn btn-primary" id="btn-query" onclick="runQuery()">查询</button>
-              <button class="btn btn-danger hidden" id="btn-cancel" onclick="cancelQuery()">取消</button>
-            </div>
+          <div class="filter-actions">
+            <button class="btn btn-primary" id="btn-query" onclick="runQuery()">查询</button>
+            <button class="btn btn-danger hidden" id="btn-cancel" onclick="cancelQuery()">取消</button>
           </div>
         </div>
       </div>
@@ -313,24 +545,32 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
             <thead>
               <tr>
                 <th>平台</th><th>用户</th><th>显示名</th><th>仓库</th>
-                <th>合并 PR 数</th><th>新增行</th><th>删除行</th><th>变更行</th><th>净增行</th><th>变更文件数</th><th>完整性</th>
+                <th>开发 PR</th><th>Comments</th><th>Approve</th>
+                <th>新增行</th><th>删除行</th><th>变更行</th><th>净增行</th><th>变更文件数</th><th>完整性</th>
               </tr>
             </thead>
             <tbody id="summary-tbody"></tbody>
           </table>
         </div>
 
-        <h3 class="mb-8 mt-16">PR 明细</h3>
-        <div class="table-wrap" style="max-height:500px; overflow-y:auto;">
-          <table>
-            <thead>
-              <tr>
-                <th>平台</th><th>仓库</th><th>PR</th><th>作者</th><th>合并时间</th>
-                <th>目标分支</th><th>新增行</th><th>删除行</th><th>变更文件数</th><th>链接</th><th>完整性</th>
-              </tr>
-            </thead>
-            <tbody id="detail-tbody"></tbody>
-          </table>
+        <div id="detail-section" class="hidden">
+          <h3 class="mb-8 mt-16"><span id="detail-title"></span></h3>
+          <div class="detail-tabs" style="display:flex; gap:8px; margin-bottom:12px;">
+            <button class="btn detail-tab active" data-tab="development" aria-selected="true" role="tab" onclick="switchDetailTab('development')">开发 PR</button>
+            <button class="btn detail-tab" data-tab="comments" aria-selected="false" role="tab" onclick="switchDetailTab('comments')">Comments</button>
+            <button class="btn detail-tab" data-tab="approvals" aria-selected="false" role="tab" onclick="switchDetailTab('approvals')">审核 PR</button>
+          </div>
+          <div class="table-wrap" style="max-height:500px; overflow-y:auto;">
+            <table>
+              <thead id="detail-thead">
+                <tr>
+                  <th>平台</th><th>仓库</th><th>PR</th><th>标题</th><th>合并时间</th>
+                  <th>新增行</th><th>删除行</th><th>变更文件数</th><th>链接</th><th>完整性</th>
+                </tr>
+              </thead>
+              <tbody id="detail-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -366,17 +606,7 @@ tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid
         <label for="edit-gitcode-login">GitCode 账号</label>
         <input type="text" id="edit-gitcode-login" placeholder="GitCode 用户名">
       </div>
-      <div class="form-field">
-        <label for="edit-repo-url">仓库地址 *</label>
-        <input type="text" id="edit-repo-url" required placeholder="https://github.com/owner/repo">
-        <div class="hint">支持 GitHub 和 GitCode 仓库 URL</div>
-      </div>
-      <div class="form-field">
-        <label class="checkbox-label">
-          <input type="checkbox" id="edit-enabled" checked>
-          启用统计
-        </label>
-      </div>
+      <!-- 仓库已移至配置页签，启用默认开启、通过表格 toggle 控制 -->
     </form>
   </div>
   <div class="dialog-footer">
@@ -510,9 +740,12 @@ var Storage = {
   },
 
   loadConfig: function() {
-    if (!this.isAvailable()) return { githubToken: '', gitcodeToken: '' };
-    try { return JSON.parse(localStorage.getItem(this.CONFIG_KEY)) || { githubToken: '', gitcodeToken: '' }; }
-    catch(e) { return { githubToken: '', gitcodeToken: '' }; }
+    if (!this.isAvailable()) return { githubToken: '', gitcodeToken: '', repositories: [] };
+    try {
+      var cfg = JSON.parse(localStorage.getItem(this.CONFIG_KEY)) || {};
+      if (!cfg.repositories) cfg.repositories = [];
+      return cfg;
+    } catch(e) { return { githubToken: '', gitcodeToken: '', repositories: [] }; }
   },
 
   saveConfig: function(cfg) {
@@ -536,7 +769,7 @@ var Storage = {
 // ========== CSV Helper ==========
 
 var CsvHelper = {
-  TEMPLATE_HEADERS: ['user_key','display_name','email','github_login','gitcode_login','repository_url','enabled'],
+  TEMPLATE_HEADERS: ['user_key','display_name','email','github_login','gitcode_login'],
 
   /** Parse CSV text (RFC 4180) into array of arrays */
   parse: function(text) {
@@ -704,6 +937,7 @@ var GitHubProvider = {
           platform: 'github',
           repo: owner + '/' + repo,
           number: detail.number,
+          title: detail.title || '',
           author: detail.user ? detail.user.login : '',
           mergedAt: detail.merged_at,
           baseBranch: detail.base ? detail.base.ref : '',
@@ -719,6 +953,7 @@ var GitHubProvider = {
         // Record failed PR
         prs.push({
           platform: 'github', repo: owner + '/' + repo, number: item.number,
+          title: '',
           author: '', mergedAt: '', baseBranch: '', additions: 0, deletions: 0, changedFiles: 0,
           completeness: 'failed', url: 'https://github.com/' + owner + '/' + repo + '/pull/' + item.number
         });
@@ -726,6 +961,169 @@ var GitHubProvider = {
     });
     await Promise.all(detailPromises);
     return { prs: prs, partial: partial, partialReason: partialReason };
+  },
+
+  /**
+   * Fetch collaboration activities (comments + approvals) for a single PR.
+   * Returns { activities: [...], partial: boolean, partialReason: string }
+   */
+  fetchCollaboration: async function(token, owner, repo, pr, signal, onProgress) {
+    var activities = [];
+    var partial = false;
+    var partialReason = '';
+    var number = pr.number;
+    var self = this;
+
+    function recordComment(item, sourceType, sourceId) {
+      var actor = item.user ? item.user.login : '';
+      var eventAt = item.created_at || item.submitted_at || pr.mergedAt || '';
+      var body = (item.body || '').trim();
+      var summary = body.length > 60 ? body.slice(0, 60) + '…' : body;
+      activities.push({
+        activity_type: 'comment',
+        platform: 'github',
+        repository: owner + '/' + repo,
+        pr_number: number,
+        pr_title: pr.title || '',
+        pr_url: pr.url,
+        merged_at: pr.mergedAt,
+        actor_login: actor,
+        user_key: '',
+        matched: false,
+        display_name: actor,
+        event_at: eventAt,
+        source_type: sourceType,
+        source_id: sourceId,
+        activity_url: item.html_url || pr.url,
+        body_summary: summary,
+        additions: 0,
+        deletions: 0,
+        changed_files: 0,
+        completeness: 'full',
+        partial_reason: ''
+      });
+    }
+
+    // Fetch three sources concurrently; any failure marks partial but does not block others
+    var issueComments = [], reviewComments = [], reviews = [];
+    var issueErr = null, reviewCommentErr = null, reviewsErr = null;
+
+    await Promise.all([
+      self._fetchPaged(
+        self.BASE + '/repos/' + owner + '/' + repo + '/issues/' + number + '/comments',
+        token, signal, onProgress, 'comments'
+      ).then(function(items) { issueComments = items || []; })
+       .catch(function(err) { issueErr = err; }),
+
+      self._fetchPaged(
+        self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number + '/comments',
+        token, signal, onProgress, 'review_comments'
+      ).then(function(items) { reviewComments = items || []; })
+       .catch(function(err) { reviewCommentErr = err; }),
+
+      self._fetchPaged(
+        self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number + '/reviews',
+        token, signal, onProgress, 'reviews'
+      ).then(function(items) { reviews = items || []; })
+       .catch(function(err) { reviewsErr = err; })
+    ]);
+
+    if (issueErr) {
+      partial = true;
+      partialReason = (partialReason ? partialReason + '; ' : '') + 'Issue comments 获取失败' + (issueErr && issueErr.message ? ': ' + issueErr.message : '');
+    } else {
+      issueComments.forEach(function(c) { recordComment(c, 'issue_comment', c.id); });
+    }
+
+    if (reviewCommentErr) {
+      partial = true;
+      partialReason = (partialReason ? partialReason + '; ' : '') + 'Review comments 获取失败' + (reviewCommentErr && reviewCommentErr.message ? ': ' + reviewCommentErr.message : '');
+    } else {
+      reviewComments.forEach(function(c) { recordComment(c, 'review_comment', c.id); });
+    }
+
+    if (reviewsErr) {
+      partial = true;
+      partialReason = (partialReason ? partialReason + '; ' : '') + 'Reviews 获取失败' + (reviewsErr && reviewsErr.message ? ': ' + reviewsErr.message : '');
+    } else {
+      // Non-empty review bodies count as comments
+      reviews.forEach(function(r) {
+        if (r.body && String(r.body).trim()) {
+          recordComment(r, 'review_body', r.id);
+        }
+      });
+
+      // Determine current effective approval per user
+      var sorted = reviews.slice().sort(function(a, b) {
+        return (a.submitted_at || '').localeCompare(b.submitted_at || '');
+      });
+      var lastStateByUser = {};
+      sorted.forEach(function(r) {
+        var user = r.user ? r.user.login : '';
+        if (!user) return;
+        var state = r.state;
+        if (state === 'APPROVED' || state === 'CHANGES_REQUESTED' || state === 'DISMISSED') {
+          lastStateByUser[user] = { state: state, submitted_at: r.submitted_at || '', review_id: r.id };
+        }
+      });
+      Object.keys(lastStateByUser).forEach(function(user) {
+        var eff = lastStateByUser[user];
+        if (eff.state === 'APPROVED') {
+          activities.push({
+            activity_type: 'approval',
+            platform: 'github',
+            repository: owner + '/' + repo,
+            pr_number: number,
+            pr_title: pr.title || '',
+            pr_url: pr.url,
+            merged_at: pr.mergedAt,
+            actor_login: user,
+            user_key: '',
+            matched: false,
+            display_name: user,
+            event_at: eff.submitted_at,
+            source_type: 'review',
+            source_id: eff.review_id,
+            activity_url: pr.url,
+            body_summary: '',
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+            completeness: 'full',
+            partial_reason: ''
+          });
+        }
+      });
+    }
+
+    // Deduplicate by activity_type + source_type + source_id within this PR
+    var seen = {};
+    activities = activities.filter(function(act) {
+      var key = act.activity_type + ':' + act.source_type + ':' + act.source_id;
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+
+    return { activities: activities, partial: partial, partialReason: partialReason };
+  },
+
+  /** Page through a GitHub endpoint that returns an array */
+  _fetchPaged: async function(baseUrl, token, signal, onProgress, stageName) {
+    var results = [];
+    var page = 1;
+    var self = this;
+    while (true) {
+      var url = baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + 'per_page=100&page=' + page;
+      var items = await self._fetch(url, token, signal);
+      if (!Array.isArray(items)) throw new Error(stageName + ' 返回格式异常');
+      results = results.concat(items);
+      if (onProgress) onProgress(stageName, results.length, results.length + (items.length === 100 ? 100 : 0));
+      if (items.length < 100) break;
+      page++;
+      await sleep(200);
+    }
+    return results;
   }
 };
 
@@ -805,6 +1203,7 @@ var GitCodeProvider = {
           platform: 'gitcode',
           repo: owner + '/' + repo,
           number: pr.number,
+          title: pr.title || '',
           author: pr.user ? pr.user.login : (pr.author ? pr.author.login : ''),
           mergedAt: pr.merged_at,
           baseBranch: pr.base ? pr.base.ref : defaultBranch,
@@ -819,6 +1218,7 @@ var GitCodeProvider = {
         if (onProgress) onProgress('获取 PR 详情', detailDone, inRange.length);
         prs.push({
           platform: 'gitcode', repo: owner + '/' + repo, number: pr.number,
+          title: pr.title || '',
           author: pr.user ? pr.user.login : '', mergedAt: pr.merged_at,
           baseBranch: defaultBranch, additions: 0, deletions: 0, changedFiles: 0,
           completeness: 'failed',
@@ -872,6 +1272,143 @@ var GitCodeProvider = {
       changedFiles: files.length,
       completeness: (tooLarge || hasUnparsable) ? 'partial' : 'full'
     };
+  },
+
+  /**
+   * Fetch collaboration activities (comments + approvals) for a single PR.
+   * Returns { activities: [...], partial: boolean, partialReason: string }
+   */
+  fetchCollaboration: async function(token, owner, repo, pr, signal, onProgress) {
+    var activities = [];
+    var partial = false;
+    var partialReason = '';
+    var number = pr.number;
+    var self = this;
+    var repoUrl = owner + '/' + repo;
+
+    function recordComment(c) {
+      var actor = c.user ? (c.user.login || c.user.username || '') : '';
+      var eventAt = c.created_at || '';
+      var body = (c.body || '').trim();
+      var summary = body.length > 60 ? body.slice(0, 60) + '…' : body;
+      activities.push({
+        activity_type: 'comment',
+        platform: 'gitcode',
+        repository: repoUrl,
+        pr_number: number,
+        pr_title: pr.title || '',
+        pr_url: pr.url,
+        merged_at: pr.mergedAt,
+        actor_login: actor,
+        user_key: '',
+        matched: false,
+        display_name: actor,
+        event_at: eventAt,
+        source_type: c.comment_type || c.type || 'comment',
+        source_id: c.id,
+        activity_url: c.html_url || pr.url,
+        body_summary: summary,
+        additions: 0,
+        deletions: 0,
+        changed_files: 0,
+        completeness: 'full',
+        partial_reason: ''
+      });
+    }
+
+    // Fetch comments and approvals concurrently
+    var comments = [], detail = null;
+    var commentsErr = null, detailErr = null;
+
+    await Promise.all([
+      self._fetchPaged(
+        self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number + '/comments',
+        token, signal, onProgress, 'comments'
+      ).then(function(items) { comments = items || []; })
+       .catch(function(err) { commentsErr = err; }),
+
+      self._fetch(
+        self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number, token, signal
+      ).then(function(data) { detail = data; })
+       .catch(function(err) { detailErr = err; })
+    ]);
+
+    if (commentsErr) {
+      partial = true;
+      partialReason = (partialReason ? partialReason + '; ' : '') + 'Comments 获取失败' + (commentsErr && commentsErr.message ? ': ' + commentsErr.message : '');
+    } else {
+      comments.forEach(recordComment);
+    }
+
+    if (detailErr) {
+      partial = true;
+      partialReason = (partialReason ? partialReason + '; ' : '') + 'Approve 信息获取失败' + (detailErr && detailErr.message ? ': ' + detailErr.message : '');
+    } else if (detail) {
+      var approvers = {};
+      (detail.approval_reviewers || []).forEach(function(u) {
+        var login = u.login || u.username || u.name || '';
+        if (login && u.accept === true && !approvers[login.toLowerCase()]) approvers[login.toLowerCase()] = login;
+      });
+      (detail.assignees || []).forEach(function(u) {
+        var login = u.login || u.username || u.name || '';
+        if (login && u.accept === true && !approvers[login.toLowerCase()]) approvers[login.toLowerCase()] = login;
+      });
+      Object.keys(approvers).forEach(function(key) {
+        var login = approvers[key];
+        activities.push({
+          activity_type: 'approval',
+          platform: 'gitcode',
+          repository: repoUrl,
+          pr_number: number,
+          pr_title: pr.title || '',
+          pr_url: pr.url,
+          merged_at: pr.mergedAt,
+          actor_login: login,
+          user_key: '',
+          matched: false,
+          display_name: login,
+          event_at: '',
+          source_type: 'approval',
+          source_id: 'approval-' + number + '-' + login,
+          activity_url: pr.url,
+          body_summary: '',
+          additions: 0,
+          deletions: 0,
+          changed_files: 0,
+          completeness: 'full',
+          partial_reason: ''
+        });
+      });
+    }
+
+    // Deduplicate by activity_type + source_type + source_id within this PR
+    var seen = {};
+    activities = activities.filter(function(act) {
+      var key = act.activity_type + ':' + act.source_type + ':' + act.source_id;
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+
+    return { activities: activities, partial: partial, partialReason: partialReason };
+  },
+
+  /** Page through a GitCode endpoint that returns an array */
+  _fetchPaged: async function(baseUrl, token, signal, onProgress, stageName) {
+    var results = [];
+    var page = 1;
+    var self = this;
+    while (true) {
+      var url = baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + 'per_page=100&page=' + page;
+      var items = await self._fetch(url, token, signal);
+      if (!Array.isArray(items)) throw new Error(stageName + ' 返回格式异常');
+      results = results.concat(items);
+      if (onProgress) onProgress(stageName, results.length, results.length + (items.length === 100 ? 100 : 0));
+      if (items.length < 100) break;
+      page++;
+      await sleep(200);
+    }
+    return results;
   }
 };
 
@@ -879,22 +1416,20 @@ var GitCodeProvider = {
 // ========== Statistics Engine ==========
 
 var StatsEngine = {
-  currentPRs: [],       // all fetched PRs (raw detail)
-  summaryRows: [],      // aggregated summary
-  filteredPRs: [],      // after user/repo filter
-  repoStatuses: [],     // per-repo status from last query
-  failedRepos: [],      // repos that failed entirely (FC-2)
-  partialRepos: [],     // repos with partial data (FCR-1: survives filtering)
+  currentActivities: [], // all fetched activities (development + comment + approval)
+  summaryRows: [],       // aggregated summary
+  filteredActivities: [], // after platform/user/repo filter
+  repoStatuses: [],      // per-repo status from last query
+  failedRepos: [],       // repos that failed entirely (FC-2)
+  partialRepos: [],      // repos with partial data (FCR-1: survives filtering)
 
   /**
-   * Build unique repo list from enabled users and current filters
+   * Build unique repo list from config repositories and current filters
    */
-  buildRepoList: function(users, filters) {
+  buildRepoList: function(configRepos, filters) {
     var repos = {};
-    users.forEach(function(u) {
-      if (!u.enabled) return;
-      if (filters.user && u.user_key !== filters.user) return;
-      var parsed = parseRepoUrl(u.repository_url);
+    configRepos.forEach(function(repoUrl) {
+      var parsed = parseRepoUrl(repoUrl);
       if (!parsed) return;
       if (filters.platform && parsed.platform !== filters.platform) return;
       if (filters.repo && (parsed.owner + '/' + parsed.repo) !== filters.repo) return;
@@ -907,82 +1442,85 @@ var StatsEngine = {
   },
 
   /**
-   * Map PRs to users: by platform + repo + login (FC-1 fix).
-   * Only matches users who are explicitly associated with that repo.
-   * Unmatched PRs are flagged so they can be excluded from user totals.
+   * Map activities to users: by platform + actor_login.
+   * Repos are global (in config), so matching is login-based across all repos.
+   * FCR-3: only enabled users participate in attribution.
    */
-  mapPRsToUsers: function(prs, users) {
-    // Build map: "platform:login:owner/repo" → {user_key, display_name}
-    // FCR-3: only enabled users participate in attribution
-    var loginRepoMap = {};
+  mapActivitiesToUsers: function(activities, users) {
+    // Build map: "platform:login" → {user_key, display_name}
+    var loginMap = {};
     users.forEach(function(u) {
       if (u.enabled === false) return;
-      var parsed = parseRepoUrl(u.repository_url);
-      if (!parsed) return;
-      var repoStr = parsed.owner + '/' + parsed.repo;
-      if (u.github_login && parsed.platform === 'github') {
-        var gk = 'github:' + u.github_login.toLowerCase() + ':' + repoStr;
-        if (!loginRepoMap[gk]) loginRepoMap[gk] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
+      if (u.github_login) {
+        var gk = 'github:' + u.github_login.toLowerCase();
+        if (!loginMap[gk]) loginMap[gk] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
       }
-      if (u.gitcode_login && parsed.platform === 'gitcode') {
-        var ck = 'gitcode:' + u.gitcode_login.toLowerCase() + ':' + repoStr;
-        if (!loginRepoMap[ck]) loginRepoMap[ck] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
+      if (u.gitcode_login) {
+        var ck = 'gitcode:' + u.gitcode_login.toLowerCase();
+        if (!loginMap[ck]) loginMap[ck] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
       }
     });
-    prs.forEach(function(pr) {
-      var lk = pr.platform + ':' + (pr.author || '').toLowerCase() + ':' + pr.repo;
-      var match = loginRepoMap[lk];
+    activities.forEach(function(act) {
+      var lk = act.platform + ':' + (act.actor_login || '').toLowerCase();
+      var match = loginMap[lk];
       if (match) {
-        pr.userKey = match.user_key;
-        pr.displayName = match.display_name;
-        pr.matched = true;
+        act.user_key = match.user_key;
+        act.display_name = match.display_name;
+        act.matched = true;
       } else {
-        pr.userKey = '';
-        pr.displayName = pr.author || '(未匹配)';
-        pr.matched = false;
+        act.user_key = '';
+        act.display_name = act.actor_login || '(未匹配)';
+        act.matched = false;
       }
     });
   },
 
   /**
-   * Aggregate PRs into summary rows: one per (platform, userKey, repo).
-   * Only includes matched PRs in named-user rows; unmatched go to "(未匹配)" group.
+   * Aggregate activities into summary rows: one per (platform, userKey, repo).
+   * Only includes matched rows in named-user rows; unmatched go to "⚠ 作者" group.
    */
-  aggregate: function(prs) {
+  aggregate: function(activities) {
     var groups = {};
-    prs.forEach(function(pr) {
-      var userLabel = pr.matched ? pr.userKey : ('⚠ ' + (pr.author || '未知'));
-      var displayLabel = pr.matched ? pr.displayName : (pr.author || '(未匹配)');
-      var key = pr.platform + '|' + userLabel + '|' + pr.repo;
+    activities.forEach(function(act) {
+      var userLabel = act.matched ? act.user_key : ('⚠ ' + (act.actor_login || '未知'));
+      var displayLabel = act.matched ? act.display_name : (act.actor_login || '(未匹配)');
+      var key = act.platform + '|' + userLabel + '|' + act.repository;
       if (!groups[key]) {
         groups[key] = {
-          platform: pr.platform,
+          platform: act.platform,
           userKey: userLabel,
           displayName: displayLabel,
-          repo: pr.repo,
-          matched: !!pr.matched,
-          prCount: 0, additions: 0, deletions: 0, changedFiles: 0,
+          repo: act.repository,
+          matched: !!act.matched,
+          prCount: 0, commentCount: 0, approveCount: 0,
+          additions: 0, deletions: 0, changedFiles: 0,
           hasPartial: false, hasFailed: false
         };
       }
       var g = groups[key];
-      g.prCount++;
-      g.additions += pr.additions;
-      g.deletions += pr.deletions;
-      g.changedFiles += pr.changedFiles;
-      if (pr.completeness === 'partial') g.hasPartial = true;
-      if (pr.completeness === 'failed') g.hasFailed = true;
-      if (pr.repoPartial) g.hasPartial = true;
+      if (act.activity_type === 'development') {
+        g.prCount++;
+        g.additions += (act.additions || 0);
+        g.deletions += (act.deletions || 0);
+        g.changedFiles += (act.changed_files || 0);
+      } else if (act.activity_type === 'comment') {
+        g.commentCount++;
+      } else if (act.activity_type === 'approval') {
+        g.approveCount++;
+      }
+      if (act.completeness === 'partial') g.hasPartial = true;
+      if (act.completeness === 'failed') g.hasFailed = true;
+      if (act.repo_partial) g.hasPartial = true;
     });
     return Object.values(groups);
   },
 
-  /** Apply user/repo filters to current PRs for display */
-  applyDisplayFilters: function(prs, filters) {
-    return prs.filter(function(pr) {
-      if (filters.user && pr.userKey !== filters.user) return false;
-      if (filters.platform && pr.platform !== filters.platform) return false;
-      if (filters.repo && pr.repo !== filters.repo) return false;
+  /** Apply platform/user/repo filters to current activities for display */
+  applyDisplayFilters: function(activities, filters) {
+    return activities.filter(function(act) {
+      if (filters.user && act.user_key !== filters.user) return false;
+      if (filters.platform && act.platform !== filters.platform) return false;
+      if (filters.repo && act.repository !== filters.repo) return false;
       return true;
     });
   },
@@ -1000,10 +1538,23 @@ var StatsEngine = {
   }
 };
 
+function renderCompletenessBadge(row) {
+  return '<span class="' + StatsEngine.completenessClass(row) + '">' +
+    StatsEngine.completenessLabel(row) + '</span>';
+}
+
 
 // ========== Query Controller ==========
 
 var queryAbort = null;
+
+function collectFilters() {
+  return {
+    platform: document.getElementById('stat-platform').value,
+    user: document.getElementById('stat-user').value,
+    repo: document.getElementById('stat-repo').value
+  };
+}
 
 async function runQuery() {
   var startDate = document.getElementById('stat-start').value;
@@ -1013,15 +1564,11 @@ async function runQuery() {
 
   var config = Storage.loadConfig();
   var users = Storage.loadUsers();
-  if (users.length === 0) { alert('请先在"用户信息"页签添加用户和仓库'); return; }
+  if (!config.repositories || config.repositories.length === 0) { alert('请先在"配置"页签添加仓库'); return; }
 
-  var filters = {
-    platform: document.getElementById('stat-platform').value,
-    user: document.getElementById('stat-user').value,
-    repo: document.getElementById('stat-repo').value
-  };
+  var filters = collectFilters();
 
-  var repos = StatsEngine.buildRepoList(users, filters);
+  var repos = StatsEngine.buildRepoList(config.repositories, filters);
   if (repos.length === 0) { alert('当前筛选条件下没有需要查询的仓库'); return; }
 
   // Check tokens
@@ -1094,11 +1641,114 @@ async function runQuery() {
   }
 
   document.getElementById('progress-title').textContent =
-    queryAbort.signal.aborted ? '查询已取消' : '查询完成 (' + completedCount + '/' + repos.length + ' 仓库)';
+    queryAbort.signal.aborted ? '查询已取消' : '已获取 ' + allPRs.length + ' 个 PR，正在获取协作活动...';
 
-  // Map PRs to users and aggregate
-  StatsEngine.mapPRsToUsers(allPRs, users);
-  StatsEngine.currentPRs = allPRs;
+  // Fetch collaboration activities for each merged PR (limited concurrency)
+  var allActivities = [];
+  allPRs.forEach(function(pr) {
+    allActivities.push({
+      activity_type: 'development',
+      platform: pr.platform,
+      repository: pr.repo,
+      pr_number: pr.number,
+      pr_title: pr.title || '',
+      pr_url: pr.url,
+      merged_at: pr.mergedAt,
+      actor_login: pr.author,
+      user_key: '',
+      matched: false,
+      display_name: pr.author,
+      event_at: pr.mergedAt,
+      source_type: 'pr',
+      source_id: pr.platform + '-' + pr.repo + '-' + pr.number,
+      activity_url: pr.url,
+      body_summary: pr.title || '',
+      additions: pr.additions,
+      deletions: pr.deletions,
+      changed_files: pr.changedFiles,
+      completeness: pr.completeness,
+      partial_reason: pr.partialReason || ''
+    });
+  });
+
+  var collabTasks = [];
+  repoStatuses.forEach(function(rs) {
+    if (rs.status === 'failed' || rs.status === 'cancelled') return;
+    var r = rs.repo;
+    var token = r.platform === 'github' ? config.githubToken : config.gitcodeToken;
+    var provider = r.platform === 'github' ? GitHubProvider : GitCodeProvider;
+    var repoPRs = allPRs.filter(function(pr) { return pr.platform === r.platform && pr.repo === (r.owner + '/' + r.repo); });
+    repoPRs.forEach(function(pr) {
+      collabTasks.push({ rs: rs, r: r, pr: pr, token: token, provider: provider, repoTotal: repoPRs.length });
+    });
+  });
+
+  var totalCollabTasks = collabTasks.length;
+  var processedCollab = 0;
+  var repoProgress = {};
+  var collabLimiter = createLimiter(3, 100);
+  var selfQueryAbort = queryAbort;
+
+  var collabPromises = collabTasks.map(function(task) {
+    return collabLimiter(async function() {
+      if (selfQueryAbort && selfQueryAbort.signal.aborted) return;
+      var rs = task.rs, r = task.r, pr = task.pr;
+      var repoKey = r.platform + ':' + r.owner + '/' + r.repo;
+      repoProgress[repoKey] = (repoProgress[repoKey] || 0) + 1;
+      processedCollab++;
+      document.getElementById('progress-title').textContent =
+        '正在获取协作活动... (' + processedCollab + '/' + totalCollabTasks + ' PR)';
+      rs.li.innerHTML = '<span class="icon">⏳</span><span>' +
+        escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 协作活动 (' +
+        repoProgress[repoKey] + '/' + task.repoTotal + ' PR)</span>';
+      try {
+        var collab = await task.provider.fetchCollaboration(
+          task.token, r.owner, r.repo, pr, selfQueryAbort.signal,
+          function(stage, done, total) {
+            var totalStr = total < 0 ? '' : ('/' + total);
+            rs.li.innerHTML = '<span class="icon">⏳</span><span>' +
+              escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' +
+              escapeHtml(stage) + ' (' + done + totalStr + ')</span>';
+          }
+        );
+        if (collab.activities && collab.activities.length > 0) {
+          allActivities = allActivities.concat(collab.activities);
+        }
+        if (collab.partial) {
+          rs.status = 'partial';
+          rs.partialReason = (rs.partialReason ? rs.partialReason + '; ' : '') + (collab.partialReason || '协作活动部分失败');
+        }
+      } catch(err) {
+        if (selfQueryAbort && !selfQueryAbort.signal.aborted) {
+          rs.status = 'partial';
+          rs.partialReason = (rs.partialReason ? rs.partialReason + '; ' : '') + '协作活动获取异常';
+        }
+      }
+    });
+  });
+  await Promise.all(collabPromises);
+
+  // Propagate repo-level partial status to all activities of that repo
+  var repoPartialMap = {};
+  repoStatuses.forEach(function(rs) {
+    if (rs.status === 'partial') {
+      repoPartialMap[rs.repo.platform + ':' + (rs.repo.owner + '/' + rs.repo.repo)] = rs.partialReason || '结果可能不完整';
+    }
+  });
+  allActivities.forEach(function(act) {
+    var reason = repoPartialMap[act.platform + ':' + act.repository];
+    if (reason) {
+      act.repo_partial = true;
+      if (act.completeness === 'full') {
+        act.completeness = 'partial';
+        act.partial_reason = reason;
+      }
+    }
+  });
+
+  // Map activities to users and aggregate
+  StatsEngine.mapActivitiesToUsers(allActivities, users);
+  StatsEngine.currentActivities = allActivities;
   StatsEngine.repoStatuses = repoStatuses;
   // FC-2: track repos that failed entirely so export can include them
   StatsEngine.failedRepos = repoStatuses
@@ -1123,25 +1773,35 @@ function cancelQuery() {
 }
 
 function renderResults(filters) {
-  var prs = StatsEngine.applyDisplayFilters(StatsEngine.currentPRs, filters);
-  var summary = StatsEngine.aggregate(prs);
+  var activities = StatsEngine.applyDisplayFilters(StatsEngine.currentActivities, filters);
+  var summary = StatsEngine.aggregate(activities);
   StatsEngine.summaryRows = summary;
-  StatsEngine.filteredPRs = prs;
+  StatsEngine.filteredActivities = activities;
+
+  // Apply user type filter
+  var userType = document.getElementById('stat-user-type').value;
+  var visibleSummary = summary.filter(function(r) {
+    if (userType === 'matched') return r.matched;
+    if (userType === 'unmatched') return !r.matched;
+    return true; // 'all'
+  });
 
   // Sort: platform, userKey, repo
-  summary.sort(function(a, b) {
+  visibleSummary.sort(function(a, b) {
     return (a.platform + a.userKey + a.repo).localeCompare(b.platform + b.userKey + b.repo);
   });
-  prs.sort(function(a, b) {
-    if (a.repo !== b.repo) return a.repo.localeCompare(b.repo);
-    return (a.mergedAt || '').localeCompare(b.mergedAt || '');
+  activities.sort(function(a, b) {
+    if (a.repository !== b.repository) return a.repository.localeCompare(b.repository);
+    return (a.merged_at || '').localeCompare(b.merged_at || '');
   });
 
-  // Grand totals — only from matched users
+  // Grand totals — only from matched users in current view
   var matchedSummary = summary.filter(function(r) { return r.matched; });
-  var totals = { prCount: 0, additions: 0, deletions: 0, changedFiles: 0 };
+  var totals = { prCount: 0, commentCount: 0, approveCount: 0, additions: 0, deletions: 0, changedFiles: 0 };
   matchedSummary.forEach(function(r) {
     totals.prCount += r.prCount;
+    totals.commentCount += r.commentCount;
+    totals.approveCount += r.approveCount;
     totals.additions += r.additions;
     totals.deletions += r.deletions;
     totals.changedFiles += r.changedFiles;
@@ -1149,73 +1809,194 @@ function renderResults(filters) {
 
   // Render summary table
   var stbody = document.getElementById('summary-tbody');
-  if (summary.length === 0) {
-    stbody.innerHTML = '<tr class="empty-row"><td colspan="11">无数据</td></tr>';
+  if (visibleSummary.length === 0) {
+    stbody.innerHTML = '<tr class="empty-row"><td colspan="13">无数据</td></tr>';
   } else {
     var html = '';
-    summary.forEach(function(r) {
-      html += '<tr>' +
+    visibleSummary.forEach(function(r, idx) {
+      html += '<tr class="summary-row" tabindex="0" data-user-key="' + escapeHtml(r.userKey) + '" data-repo="' + escapeHtml(r.repo) + '" data-platform="' + escapeHtml(r.platform) + '" data-matched="' + r.matched + '" onclick="selectSummaryRow(this)" onkeydown="if(event.key===\'Enter\'||event.key===\' \') { event.preventDefault(); selectSummaryRow(this); }">' +
         '<td>' + escapeHtml(r.platform) + '</td>' +
         '<td>' + escapeHtml(r.userKey) + '</td>' +
         '<td>' + escapeHtml(r.displayName) + '</td>' +
         '<td>' + escapeHtml(r.repo) + '</td>' +
         '<td class="num">' + formatNum(r.prCount) + '</td>' +
+        '<td class="num">' + formatNum(r.commentCount) + '</td>' +
+        '<td class="num">' + formatNum(r.approveCount) + '</td>' +
         '<td class="num">' + formatNum(r.additions) + '</td>' +
         '<td class="num">' + formatNum(r.deletions) + '</td>' +
         '<td class="num">' + formatNum(r.additions + r.deletions) + '</td>' +
         '<td class="num">' + formatNum(r.additions - r.deletions) + '</td>' +
         '<td class="num">' + formatNum(r.changedFiles) + '</td>' +
-        '<td class="' + StatsEngine.completenessClass(r) + '">' + StatsEngine.completenessLabel(r) + '</td>' +
+        '<td class="completeness-cell">' + renderCompletenessBadge(r) + '</td>' +
         '</tr>';
     });
-    // Grand total
-    html += '<tr class="grand-total">' +
-      '<td colspan="4">合计</td>' +
-      '<td class="num">' + formatNum(totals.prCount) + '</td>' +
-      '<td class="num">' + formatNum(totals.additions) + '</td>' +
-      '<td class="num">' + formatNum(totals.deletions) + '</td>' +
-      '<td class="num">' + formatNum(totals.additions + totals.deletions) + '</td>' +
-      '<td class="num">' + formatNum(totals.additions - totals.deletions) + '</td>' +
-      '<td class="num">' + formatNum(totals.changedFiles) + '</td>' +
-      '<td></td></tr>';
+    // Grand total — only when not in "unmatched" view
+    if (userType !== 'unmatched') {
+      html += '<tr class="grand-total">' +
+        '<td colspan="4">合计（已匹配用户）</td>' +
+        '<td class="num">' + formatNum(totals.prCount) + '</td>' +
+        '<td class="num">' + formatNum(totals.commentCount) + '</td>' +
+        '<td class="num">' + formatNum(totals.approveCount) + '</td>' +
+        '<td class="num">' + formatNum(totals.additions) + '</td>' +
+        '<td class="num">' + formatNum(totals.deletions) + '</td>' +
+        '<td class="num">' + formatNum(totals.additions + totals.deletions) + '</td>' +
+        '<td class="num">' + formatNum(totals.additions - totals.deletions) + '</td>' +
+        '<td class="num">' + formatNum(totals.changedFiles) + '</td>' +
+        '<td></td></tr>';
+    }
     stbody.innerHTML = html;
   }
 
-  // Render detail table
-  var dtbody = document.getElementById('detail-tbody');
-  if (prs.length === 0) {
-    dtbody.innerHTML = '<tr class="empty-row"><td colspan="11">无数据</td></tr>';
-  } else {
-    var dhtml = '';
-    prs.forEach(function(pr) {
-      dhtml += '<tr>' +
-        '<td>' + escapeHtml(pr.platform) + '</td>' +
-        '<td>' + escapeHtml(pr.repo) + '</td>' +
-        '<td class="num">#' + pr.number + '</td>' +
-        '<td>' + escapeHtml(pr.displayName || pr.author) + '</td>' +
-        '<td>' + formatDate(pr.mergedAt) + '</td>' +
-        '<td>' + escapeHtml(pr.baseBranch) + '</td>' +
-        '<td class="num">' + formatNum(pr.additions) + '</td>' +
-        '<td class="num">' + formatNum(pr.deletions) + '</td>' +
-        '<td class="num">' + formatNum(pr.changedFiles) + '</td>' +
-        '<td><a href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener">查看</a></td>' +
-        '<td class="' + StatsEngine.completenessClass(pr) + '">' + StatsEngine.completenessLabel(pr) + '</td>' +
-        '</tr>';
-    });
-    dtbody.innerHTML = dhtml;
-  }
+  // Hide detail by default
+  document.getElementById('detail-section').classList.add('hidden');
 
   // Results summary text
   var unmatchedCount = summary.filter(function(r) { return !r.matched; }).length;
   var failedCount = StatsEngine.failedRepos.length;
   var partialCount = StatsEngine.partialRepos.length;
-  var summaryText = '共 ' + prs.length + ' 个 PR，' + summary.length + ' 个用户-仓库组合';
-  if (unmatchedCount > 0) summaryText += '（含 ' + unmatchedCount + ' 个未匹配作者）';
+  var summaryText = '共 ' + activities.length + ' 条活动，' + matchedSummary.length + ' 个用户';
+  if (unmatchedCount > 0) summaryText += '，' + unmatchedCount + ' 个未匹配作者';
   if (partialCount > 0) summaryText += '，' + partialCount + ' 个仓库为部分统计';
   if (failedCount > 0) summaryText += '，' + failedCount + ' 个仓库查询失败';
+  summaryText += '（点击汇总行查看详情）';
   document.getElementById('results-summary').textContent = summaryText;
 
   document.getElementById('results-section').classList.remove('hidden');
+}
+
+/** Detail view state */
+var selectedSummaryRow = null;
+var currentDetailTab = 'development';
+
+/** Show detail for selected summary row */
+function selectSummaryRow(tr) {
+  var wasSelected = tr.classList.contains('selected');
+  document.querySelectorAll('.summary-row').forEach(function(r) { r.classList.remove('selected'); });
+  var detailSection = document.getElementById('detail-section');
+
+  if (wasSelected) {
+    detailSection.classList.add('hidden');
+    selectedSummaryRow = null;
+    return;
+  }
+  tr.classList.add('selected');
+  selectedSummaryRow = tr;
+  currentDetailTab = 'development';
+
+  // Find matching summary row data to show counts on tabs
+  var rowData = StatsEngine.summaryRows.find(function(r) {
+    return r.platform === tr.dataset.platform && r.repo === tr.dataset.repo &&
+      String(r.matched) === tr.dataset.matched && r.userKey === tr.dataset.userKey;
+  });
+  updateDetailTabs(rowData || { prCount: 0, commentCount: 0, approveCount: 0 });
+
+  document.getElementById('detail-title').textContent = tr.dataset.userKey + ' / ' + tr.dataset.repo;
+  renderDetail();
+  detailSection.classList.remove('hidden');
+}
+
+/** Update detail tab labels with counts and accessibility state */
+function updateDetailTabs(rowData) {
+  var labels = {
+    development: '开发 PR (' + (rowData.prCount || 0) + ')',
+    comments: 'Comments (' + (rowData.commentCount || 0) + ')',
+    approvals: '审核 PR (' + (rowData.approveCount || 0) + ')'
+  };
+  document.querySelectorAll('.detail-tab').forEach(function(btn) {
+    var tab = btn.dataset.tab;
+    btn.textContent = labels[tab];
+    btn.classList.toggle('active', tab === currentDetailTab);
+    btn.setAttribute('aria-selected', tab === currentDetailTab ? 'true' : 'false');
+  });
+}
+
+/** Switch active detail tab */
+function switchDetailTab(tabName) {
+  currentDetailTab = tabName;
+  document.querySelectorAll('.detail-tab').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+    btn.setAttribute('aria-selected', btn.dataset.tab === tabName ? 'true' : 'false');
+  });
+  renderDetail();
+}
+
+/** Render detail table based on selected row and current tab */
+function renderDetail() {
+  if (!selectedSummaryRow) return;
+  var userKey = selectedSummaryRow.dataset.userKey;
+  var repo = selectedSummaryRow.dataset.repo;
+  var platform = selectedSummaryRow.dataset.platform;
+  var matched = selectedSummaryRow.dataset.matched === 'true';
+
+  var detailActs = StatsEngine.filteredActivities.filter(function(act) {
+    if (act.platform !== platform || act.repository !== repo) return false;
+    if (matched) return act.matched && act.user_key === userKey;
+    return !act.matched && (act.actor_login || '') === userKey.replace(/^⚠ /, '');
+  });
+
+  var thead = document.getElementById('detail-thead');
+  var dtbody = document.getElementById('detail-tbody');
+
+  if (currentDetailTab === 'development') {
+    thead.innerHTML = '<tr><th>平台</th><th>仓库</th><th>PR</th><th>标题</th><th>合并时间</th><th>新增行</th><th>删除行</th><th>变更文件数</th><th>链接</th><th>完整性</th></tr>';
+    var devActs = detailActs.filter(function(a) { return a.activity_type === 'development'; });
+    if (devActs.length === 0) {
+      dtbody.innerHTML = '<tr class="empty-row"><td colspan="10">无开发 PR</td></tr>';
+      return;
+    }
+    dtbody.innerHTML = devActs.map(function(act) {
+      return '<tr>' +
+        '<td>' + escapeHtml(act.platform) + '</td>' +
+        '<td>' + escapeHtml(act.repository) + '</td>' +
+        '<td class="num">#' + act.pr_number + '</td>' +
+        '<td>' + escapeHtml(act.pr_title) + '</td>' +
+        '<td>' + formatDate(act.merged_at) + '</td>' +
+        '<td class="num">' + formatNum(act.additions) + '</td>' +
+        '<td class="num">' + formatNum(act.deletions) + '</td>' +
+        '<td class="num">' + formatNum(act.changed_files) + '</td>' +
+        '<td><a href="' + escapeHtml(act.activity_url) + '" target="_blank" rel="noopener">查看</a></td>' +
+        '<td class="completeness-cell">' + renderCompletenessBadge(act) + '</td>' +
+        '</tr>';
+    }).join('');
+  } else if (currentDetailTab === 'comments') {
+    thead.innerHTML = '<tr><th>平台</th><th>仓库</th><th>PR</th><th>评论类型</th><th>活动时间</th><th>内容摘要</th><th>链接</th><th>完整性</th></tr>';
+    var commentActs = detailActs.filter(function(a) { return a.activity_type === 'comment'; });
+    if (commentActs.length === 0) {
+      dtbody.innerHTML = '<tr class="empty-row"><td colspan="8">无 Comments</td></tr>';
+      return;
+    }
+    dtbody.innerHTML = commentActs.map(function(act) {
+      return '<tr>' +
+        '<td>' + escapeHtml(act.platform) + '</td>' +
+        '<td>' + escapeHtml(act.repository) + '</td>' +
+        '<td class="num">#' + act.pr_number + '</td>' +
+        '<td>' + escapeHtml(act.source_type) + '</td>' +
+        '<td>' + formatDate(act.event_at) + '</td>' +
+        '<td>' + escapeHtml(act.body_summary) + '</td>' +
+        '<td><a href="' + escapeHtml(act.activity_url) + '" target="_blank" rel="noopener">查看</a></td>' +
+        '<td class="completeness-cell">' + renderCompletenessBadge(act) + '</td>' +
+        '</tr>';
+    }).join('');
+  } else if (currentDetailTab === 'approvals') {
+    thead.innerHTML = '<tr><th>平台</th><th>仓库</th><th>PR</th><th>标题</th><th>审核时间</th><th>当前状态</th><th>链接</th><th>完整性</th></tr>';
+    var approvalActs = detailActs.filter(function(a) { return a.activity_type === 'approval'; });
+    if (approvalActs.length === 0) {
+      dtbody.innerHTML = '<tr class="empty-row"><td colspan="8">无审核 PR</td></tr>';
+      return;
+    }
+    dtbody.innerHTML = approvalActs.map(function(act) {
+      return '<tr>' +
+        '<td>' + escapeHtml(act.platform) + '</td>' +
+        '<td>' + escapeHtml(act.repository) + '</td>' +
+        '<td class="num">#' + act.pr_number + '</td>' +
+        '<td>' + escapeHtml(act.pr_title) + '</td>' +
+        '<td>' + formatDate(act.event_at) + '</td>' +
+        '<td>已 Approve</td>' +
+        '<td><a href="' + escapeHtml(act.activity_url) + '" target="_blank" rel="noopener">查看</a></td>' +
+        '<td class="completeness-cell">' + renderCompletenessBadge(act) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
 }
 
 
@@ -1223,28 +2004,50 @@ function renderResults(filters) {
 
 function exportCSV(type) {
   if (type === 'summary') {
-    var headers = ['平台', '用户', '显示名', '仓库', '合并PR数', '新增行', '删除行', '变更行', '净增行', '变更文件数', '完整性'];
-    var rows = StatsEngine.summaryRows.map(function(r) {
-      return [r.platform, r.userKey, r.displayName, r.repo, r.prCount, r.additions, r.deletions,
-        r.additions + r.deletions, r.additions - r.deletions, r.changedFiles, StatsEngine.completenessLabel(r)];
+    // AC-A1 / AC-C1: summary CSV must use the same visible projection as the page
+    var userType = document.getElementById('stat-user-type').value;
+    var visibleSummary = StatsEngine.summaryRows.filter(function(r) {
+      if (userType === 'matched') return r.matched;
+      if (userType === 'unmatched') return !r.matched;
+      return true;
     });
-    // FCR-1: append partial repos so export never silently omits partial status
+    var headers = ['平台', '用户', '显示名', '仓库', '开发PR数', 'Comments', 'Approve', '新增行', '删除行', '变更行', '净增行', '变更文件数', '完整性'];
+    var rows = visibleSummary.map(function(r) {
+      return [r.platform, r.userKey, r.displayName, r.repo, r.prCount, r.commentCount, r.approveCount,
+        r.additions, r.deletions, r.additions + r.deletions, r.additions - r.deletions, r.changedFiles,
+        StatsEngine.completenessLabel(r)];
+    });
+    // Diagnostics belong only to repositories represented in the visible summary.
+    // This keeps partial/failed context without creating empty platform rows.
+    var visibleRepoKeys = {};
+    visibleSummary.forEach(function(r) {
+      visibleRepoKeys[r.platform + ':' + r.repo] = true;
+    });
     StatsEngine.partialRepos.forEach(function(pr) {
-      rows.push([pr.platform, '', '', pr.repo, '', '', '', '', '', '', '部分（' + (pr.reason || '结果可能不完整') + '）']);
+      if (!visibleRepoKeys[pr.platform + ':' + pr.repo]) return;
+      rows.push([pr.platform, '', '', pr.repo, '', '', '', '', '', '', '', '', '部分（' + (pr.reason || '结果可能不完整') + '）']);
     });
-    // FC-2: append failed repos so export never silently omits failures
     StatsEngine.failedRepos.forEach(function(fr) {
-      rows.push([fr.platform, '', '', fr.repo, 0, 0, 0, 0, 0, 0, '失败: ' + fr.error]);
+      if (!visibleRepoKeys[fr.platform + ':' + fr.repo]) return;
+      rows.push([fr.platform, '', '', fr.repo, 0, 0, 0, 0, 0, 0, 0, 0, '失败: ' + fr.error]);
     });
     var csv = CsvHelper.generate(headers, rows);
     CsvHelper.download('PR代码变更统计_汇总_' + todayStr() + '.csv', csv);
   } else {
-    var headers = ['平台', '仓库', 'PR编号', '作者', '用户标识', '显示名', '合并时间', '目标分支',
-      '新增行', '删除行', '变更文件数', '链接', '完整性'];
-    var rows = StatsEngine.filteredPRs.map(function(pr) {
-      return [pr.platform, pr.repo, pr.number, pr.author, pr.userKey || '', pr.displayName || pr.author,
-        pr.mergedAt || '', pr.baseBranch, pr.additions, pr.deletions, pr.changedFiles,
-        pr.url, StatsEngine.completenessLabel(pr)];
+    // AC-C1: detail CSV applies the same filters as the page, including user type
+    var userType2 = document.getElementById('stat-user-type').value;
+    var detailActivities = StatsEngine.filteredActivities.filter(function(act) {
+      if (userType2 === 'matched') return act.matched;
+      if (userType2 === 'unmatched') return !act.matched;
+      return true;
+    });
+    var headers = ['平台', '仓库', 'PR编号', 'PR标题', '活动类型', '活动来源', '活动时间', '合并时间',
+      '作者', '用户标识', '显示名', '新增行', '删除行', '变更文件数', '内容摘要', '链接', '完整性'];
+    var rows = detailActivities.map(function(act) {
+      return [act.platform, act.repository, act.pr_number, act.pr_title, act.activity_type, act.source_type,
+        act.event_at || '', act.merged_at || '', act.actor_login, act.user_key || '', act.display_name || act.actor_login,
+        act.additions, act.deletions, act.changed_files, act.body_summary || '', act.activity_url,
+        StatsEngine.completenessLabel(act)];
     });
     var csv = CsvHelper.generate(headers, rows);
     CsvHelper.download('PR代码变更统计_明细_' + todayStr() + '.csv', csv);
@@ -1254,23 +2057,24 @@ function exportCSV(type) {
 
 // ========== Token Management ==========
 
-function saveToken(platform) {
-  var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
-  var token = document.getElementById(inputId).value.trim();
+function persistToken(platform, token) {
   var config = Storage.loadConfig();
   if (platform === 'github') config.githubToken = token;
   else config.gitcodeToken = token;
   Storage.saveConfig(config);
+}
+
+function saveToken(platform) {
+  var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
+  var token = document.getElementById(inputId).value.trim();
+  persistToken(platform, token);
   showTokenStatus(platform, 'ok', '已保存' + (token ? ' (' + maskToken(token) + ')' : ''));
 }
 
 function clearToken(platform) {
   var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
   document.getElementById(inputId).value = '';
-  var config = Storage.loadConfig();
-  if (platform === 'github') config.githubToken = '';
-  else config.gitcodeToken = '';
-  Storage.saveConfig(config);
+  persistToken(platform, '');
   showTokenStatus(platform, 'ok', '已清除');
 }
 
@@ -1287,7 +2091,8 @@ async function testConnection(platform) {
   try {
     var provider = platform === 'github' ? GitHubProvider : GitCodeProvider;
     var result = await provider.testConnection(token);
-    showTokenStatus(platform, 'ok', '已连接: ' + result.login + (result.name !== result.login ? ' (' + result.name + ')' : ''));
+    persistToken(platform, token);
+    showTokenStatus(platform, 'ok', '已连接并保存: ' + result.login + (result.name !== result.login ? ' (' + result.name + ')' : ''));
   } catch(err) {
     var msg = err.message || '连接失败';
     if (msg.indexOf('401') >= 0) msg = '认证失败，请检查 Token';
@@ -1317,18 +2122,18 @@ function renderUsers() {
   var users = Storage.loadUsers();
   var tbody = document.getElementById('users-tbody');
   if (users.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">暂无数据，点击"新增"或"CSV 导入"添加用户</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">暂无数据，点击"新增"或"CSV 导入"添加用户</td></tr>';
   } else {
     var html = '';
     users.forEach(function(u, i) {
+      var checked = u.enabled !== false ? 'checked' : '';
       html += '<tr>' +
         '<td>' + escapeHtml(u.user_key) + '</td>' +
         '<td>' + escapeHtml(u.display_name || '') + '</td>' +
         '<td>' + escapeHtml(u.email || '') + '</td>' +
         '<td>' + escapeHtml(u.github_login || '') + '</td>' +
         '<td>' + escapeHtml(u.gitcode_login || '') + '</td>' +
-        '<td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(u.repository_url) + '">' + escapeHtml(u.repository_url) + '</td>' +
-        '<td>' + (u.enabled ? '✓' : '✗') + '</td>' +
+        '<td><label class="toggle"><input type="checkbox" ' + checked + ' onchange="toggleUserEnabled(' + i + ', this.checked)"><span class="slider"></span></label></td>' +
         '<td class="actions">' +
           '<button class="btn btn-sm" onclick="showUserDialog(' + i + ')">编辑</button> ' +
           '<button class="btn btn-sm btn-danger" onclick="deleteUser(' + i + ')">删除</button>' +
@@ -1352,11 +2157,8 @@ function showUserDialog(index) {
     document.getElementById('edit-email').value = u.email || '';
     document.getElementById('edit-github-login').value = u.github_login || '';
     document.getElementById('edit-gitcode-login').value = u.gitcode_login || '';
-    document.getElementById('edit-repo-url').value = u.repository_url || '';
-    document.getElementById('edit-enabled').checked = u.enabled !== false;
   } else {
     document.getElementById('user-form').reset();
-    document.getElementById('edit-enabled').checked = true;
   }
   dlg.showModal();
 }
@@ -1368,9 +2170,6 @@ function closeUserDialog() {
 function saveUser(event) {
   event.preventDefault();
   var idx = parseInt(document.getElementById('edit-index').value);
-  var repoUrl = document.getElementById('edit-repo-url').value.trim();
-  var parsed = parseRepoUrl(repoUrl);
-  if (!parsed) { alert('仓库地址格式不正确，请输入 GitHub 或 GitCode 的仓库 URL'); return false; }
 
   var record = {
     user_key: document.getElementById('edit-user-key').value.trim(),
@@ -1378,17 +2177,28 @@ function saveUser(event) {
     email: document.getElementById('edit-email').value.trim(),
     github_login: document.getElementById('edit-github-login').value.trim(),
     gitcode_login: document.getElementById('edit-gitcode-login').value.trim(),
-    repository_url: repoUrl,
-    enabled: document.getElementById('edit-enabled').checked
+    enabled: true
   };
 
   var users = Storage.loadUsers();
-  if (idx >= 0) { users[idx] = record; }
-  else { users.push(record); }
+  if (idx >= 0) {
+    record.enabled = users[idx].enabled !== false; // preserve current toggle state
+    users[idx] = record;
+  } else {
+    users.push(record);
+  }
   Storage.saveUsers(users);
   closeUserDialog();
   renderUsers();
   return false;
+}
+
+function toggleUserEnabled(index, checked) {
+  var users = Storage.loadUsers();
+  if (index >= 0 && index < users.length) {
+    users[index].enabled = checked;
+    Storage.saveUsers(users);
+  }
 }
 
 function deleteUser(index) {
@@ -1397,6 +2207,56 @@ function deleteUser(index) {
   users.splice(index, 1);
   Storage.saveUsers(users);
   renderUsers();
+}
+
+
+// ========== Repo Management (config tab) ==========
+
+function renderRepos() {
+  var config = Storage.loadConfig();
+  var repos = config.repositories || [];
+  var container = document.getElementById('repo-list');
+  if (repos.length === 0) {
+    container.innerHTML = '<span class="text-sm text-muted">暂无仓库，请添加</span>';
+    return;
+  }
+  var html = '<table style="width:100%;font-size:.85rem;"><tbody>';
+  repos.forEach(function(url, i) {
+    var parsed = parseRepoUrl(url);
+    var badge = parsed ? ('<span class="status status-ok" style="font-size:.75rem;">' + parsed.platform + '</span>') : '';
+    html += '<tr><td>' + badge + ' ' + escapeHtml(url) + '</td>' +
+      '<td class="actions" style="text-align:right;"><button class="btn btn-sm btn-danger" onclick="removeRepo(' + i + ')">删除</button></td></tr>';
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function addRepo() {
+  var input = document.getElementById('new-repo-url');
+  var url = input.value.trim();
+  if (!url) return;
+  var parsed = parseRepoUrl(url);
+  if (!parsed) { alert('仓库地址格式不正确，请输入 GitHub 或 GitCode 的仓库 URL'); return; }
+  var config = Storage.loadConfig();
+  // Dedup
+  var existing = config.repositories.some(function(r) {
+    var p = parseRepoUrl(r);
+    return p && p.platform === parsed.platform && p.owner === parsed.owner && p.repo === parsed.repo;
+  });
+  if (existing) { alert('该仓库已存在'); return; }
+  config.repositories.push(url);
+  Storage.saveConfig(config);
+  input.value = '';
+  renderRepos();
+  refreshFilterDropdowns();
+}
+
+function removeRepo(index) {
+  var config = Storage.loadConfig();
+  config.repositories.splice(index, 1);
+  Storage.saveConfig(config);
+  renderRepos();
+  refreshFilterDropdowns();
 }
 
 
@@ -1425,8 +2285,8 @@ function handleCSVFile(event) {
       var idx = header.indexOf(col);
       colMap[col] = idx;
     });
-    if (colMap['user_key'] < 0 || colMap['repository_url'] < 0) {
-      alert('CSV 缺少必要列：user_key 和 repository_url');
+    if (colMap['user_key'] < 0) {
+      alert('CSV 缺少必要列：user_key');
       event.target.value = '';
       return;
     }
@@ -1439,14 +2299,10 @@ function handleCSVFile(event) {
       EXPECTED.forEach(function(col) {
         record[col] = colMap[col] >= 0 && colMap[col] < r.length ? r[colMap[col]].trim() : '';
       });
-      // enabled: default true
-      if (record.enabled === '') record.enabled = true;
-      else record.enabled = record.enabled !== '0' && record.enabled.toLowerCase() !== 'false' && record.enabled.toLowerCase() !== 'no';
+      record.enabled = true;
 
       var errors = [];
       if (!record.user_key) errors.push('user_key 为空');
-      if (!record.repository_url) errors.push('repository_url 为空');
-      else if (!parseRepoUrl(record.repository_url)) errors.push('仓库地址格式不正确');
 
       if (errors.length > 0) {
         invalidRows.push({ row: i + 1, record: record, errors: errors });
@@ -1470,7 +2326,7 @@ function showImportPreview(validRows, invalidRows) {
     (invalidRows.length > 0 ? '（无效行将跳过）' : '');
 
   var thead = document.getElementById('import-thead');
-  thead.innerHTML = '<tr><th>行</th><th>状态</th><th>用户标识</th><th>显示名</th><th>GitHub</th><th>GitCode</th><th>仓库</th><th>问题</th></tr>';
+  thead.innerHTML = '<tr><th>行</th><th>状态</th><th>用户标识</th><th>显示名</th><th>GitHub</th><th>GitCode</th><th>问题</th></tr>';
 
   var tbody = document.getElementById('import-tbody');
   var html = '';
@@ -1480,7 +2336,6 @@ function showImportPreview(validRows, invalidRows) {
       '<td>' + escapeHtml(v.record.display_name) + '</td>' +
       '<td>' + escapeHtml(v.record.github_login) + '</td>' +
       '<td>' + escapeHtml(v.record.gitcode_login) + '</td>' +
-      '<td>' + escapeHtml(v.record.repository_url) + '</td>' +
       '<td></td></tr>';
   });
   invalidRows.forEach(function(v) {
@@ -1489,7 +2344,6 @@ function showImportPreview(validRows, invalidRows) {
       '<td>' + escapeHtml(v.record.display_name) + '</td>' +
       '<td>' + escapeHtml(v.record.github_login) + '</td>' +
       '<td>' + escapeHtml(v.record.gitcode_login) + '</td>' +
-      '<td>' + escapeHtml(v.record.repository_url) + '</td>' +
       '<td class="err-msg">' + escapeHtml(v.errors.join('; ')) + '</td></tr>';
   });
   tbody.innerHTML = html;
@@ -1514,7 +2368,7 @@ function closeImportDialog() {
 
 function downloadTemplate() {
   var csv = CsvHelper.generate(CsvHelper.TEMPLATE_HEADERS, [
-    ['zhangsan', '张三', 'zhangsan@example.com', 'zhangsan', 'zhangsan_gc', 'https://github.com/org/repo', 'true']
+    ['zhangsan', '张三', 'zhangsan@example.com', 'zhangsan', 'zhangsan_gc']
   ]);
   CsvHelper.download('用户导入模板.csv', csv);
 }
@@ -1524,18 +2378,15 @@ function downloadTemplate() {
 
 function refreshFilterDropdowns() {
   var users = Storage.loadUsers();
+  var config = Storage.loadConfig();
   var platform = document.getElementById('stat-platform').value;
 
-  // User dropdown
+  // User dropdown — from user list
   var userSelect = document.getElementById('stat-user');
   var currentUser = userSelect.value;
   var uniqueUsers = {};
   users.forEach(function(u) {
-    if (!u.enabled) return;
-    if (platform) {
-      var parsed = parseRepoUrl(u.repository_url);
-      if (parsed && parsed.platform !== platform) return;
-    }
+    if (u.enabled === false) return;
     if (!uniqueUsers[u.user_key]) uniqueUsers[u.user_key] = u.display_name || u.user_key;
   });
   userSelect.innerHTML = '<option value="">全部</option>';
@@ -1546,15 +2397,12 @@ function refreshFilterDropdowns() {
     userSelect.appendChild(opt);
   });
 
-  // Repo dropdown
-  var selectedUser = userSelect.value;
+  // Repo dropdown — from config repos
   var repoSelect = document.getElementById('stat-repo');
   var currentRepo = repoSelect.value;
   var uniqueRepos = {};
-  users.forEach(function(u) {
-    if (!u.enabled) return;
-    if (selectedUser && u.user_key !== selectedUser) return;
-    var parsed = parseRepoUrl(u.repository_url);
+  (config.repositories || []).forEach(function(url) {
+    var parsed = parseRepoUrl(url);
     if (!parsed) return;
     if (platform && parsed.platform !== platform) return;
     var rk = parsed.owner + '/' + parsed.repo;
@@ -1577,6 +2425,7 @@ function switchTab(tabName) {
   document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.toggle('active', p.id === 'tab-' + tabName); });
   if (tabName === 'users') renderUsers();
   if (tabName === 'stats') refreshFilterDropdowns();
+  if (tabName === 'config') renderRepos();
 }
 
 
@@ -1606,9 +2455,15 @@ document.addEventListener('DOMContentLoaded', function() {
   // Filter change handlers
   document.getElementById('stat-platform').addEventListener('change', refreshFilterDropdowns);
   document.getElementById('stat-user').addEventListener('change', refreshFilterDropdowns);
+  document.getElementById('stat-user-type').addEventListener('change', function() {
+    if (StatsEngine.currentActivities && StatsEngine.currentActivities.length > 0) {
+      renderResults(collectFilters());
+    }
+  });
 
-  // Render users
+  // Render users and repos
   renderUsers();
+  renderRepos();
 
   // localStorage warning
   if (!Storage.isAvailable()) {
