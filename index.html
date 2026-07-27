@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR 代码变更统计</title>
+<style>
+/* ========== Reset & Variables ========== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f3f4f6; --card: #fff; --primary: #2563eb; --primary-hover: #1d4ed8;
+  --text: #1f2937; --text-2: #6b7280; --text-3: #9ca3af;
+  --border: #e5e7eb; --border-2: #d1d5db;
+  --success: #16a34a; --success-bg: #f0fdf4;
+  --warn: #d97706; --warn-bg: #fffbeb;
+  --error: #dc2626; --error-bg: #fef2f2;
+  --radius: 6px; --shadow: 0 1px 3px rgba(0,0,0,.08);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --mono: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+}
+html { font-size: 14px; }
+body { font-family: var(--font); color: var(--text); background: var(--bg); line-height: 1.6; }
+
+/* ========== Layout ========== */
+.app { max-width: 1200px; margin: 0 auto; padding: 16px; }
+.app-header { margin-bottom: 20px; }
+.app-header h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 12px; }
+.tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); }
+.tab { padding: 8px 20px; border: none; background: none; cursor: pointer; font-size: .95rem;
+  color: var(--text-2); border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color .15s, border-color .15s; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ========== Card ========== */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.card h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: 12px; }
+.card p { color: var(--text-2); margin-bottom: 8px; }
+.card ul { margin-left: 20px; color: var(--text-2); }
+.card ul li { margin-bottom: 4px; }
+.card code { font-family: var(--mono); font-size: .85rem; background: #f9fafb; padding: 2px 6px; border-radius: 3px; }
+
+/* ========== Forms ========== */
+.form-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.form-row label { min-width: 100px; font-weight: 500; flex-shrink: 0; }
+.form-row input[type="text"], .form-row input[type="password"], .form-row input[type="email"],
+.form-row input[type="date"], .form-row select {
+  flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: var(--radius);
+  font-size: .9rem; font-family: var(--font); outline: none; transition: border-color .15s; }
+.form-row input:focus, .form-row select:focus { border-color: var(--primary); }
+.form-row .token-display { font-family: var(--mono); font-size: .85rem; color: var(--text-2); margin-left: 4px; }
+
+/* ========== Buttons ========== */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid var(--border-2);
+  border-radius: var(--radius); background: var(--card); color: var(--text); cursor: pointer;
+  font-size: .85rem; font-family: var(--font); transition: background .15s, border-color .15s; white-space: nowrap; }
+.btn:hover { background: #f9fafb; border-color: var(--text-3); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-danger { color: var(--error); border-color: var(--error); }
+.btn-danger:hover:not(:disabled) { background: var(--error-bg); }
+.btn-sm { padding: 3px 8px; font-size: .8rem; }
+
+/* ========== Status ========== */
+.status { display: inline-flex; align-items: center; gap: 4px; font-size: .85rem; padding: 3px 8px; border-radius: 12px; }
+.status-ok { color: var(--success); background: var(--success-bg); }
+.status-warn { color: var(--warn); background: var(--warn-bg); }
+.status-err { color: var(--error); background: var(--error-bg); }
+
+/* ========== Toolbar ========== */
+.toolbar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+.toolbar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ========== Tables ========== */
+.table-wrap { overflow-x: auto; margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--radius); }
+table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+thead th { background: #f9fafb; padding: 8px 10px; text-align: left; font-weight: 600;
+  border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+tbody td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:hover { background: #f9fafb; }
+tbody tr:last-child td { border-bottom: none; }
+td.num { text-align: right; font-family: var(--mono); font-size: .85rem; }
+td.actions { white-space: nowrap; }
+.empty-row td { text-align: center; color: var(--text-3); padding: 30px; }
+.completeness-full { color: var(--success); }
+.completeness-partial { color: var(--warn); }
+.completeness-failed { color: var(--error); }
+
+/* ========== Filters ========== */
+.filters { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.filter-group { display: flex; flex-direction: column; gap: 3px; }
+.filter-group label { font-size: .8rem; color: var(--text-2); font-weight: 500; }
+.filter-group input, .filter-group select { padding: 6px 10px; border: 1px solid var(--border-2);
+  border-radius: var(--radius); font-size: .85rem; font-family: var(--font); outline: none; }
+.filter-group input:focus, .filter-group select:focus { border-color: var(--primary); }
+
+/* ========== Progress ========== */
+.progress-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 16px; }
+.progress-title { font-weight: 600; margin-bottom: 10px; }
+.progress-list { list-style: none; font-size: .85rem; }
+.progress-list li { padding: 4px 0; display: flex; align-items: center; gap: 8px; }
+.progress-list .icon { width: 18px; text-align: center; flex-shrink: 0; }
+
+/* ========== Dialog ========== */
+dialog { border: none; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,.15); padding: 0;
+  max-width: 700px; width: 90vw; }
+dialog::backdrop { background: rgba(0,0,0,.3); }
+.dialog-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.dialog-header h3 { font-size: 1rem; font-weight: 600; }
+.dialog-body { padding: 20px; max-height: 60vh; overflow-y: auto; }
+.dialog-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-close { background: none; border: none; cursor: pointer; font-size: 1.2rem; color: var(--text-2); padding: 4px; }
+
+/* ========== Import Preview ========== */
+.import-summary { margin-bottom: 12px; font-size: .9rem; }
+.import-summary .ok { color: var(--success); font-weight: 500; }
+.import-summary .bad { color: var(--error); font-weight: 500; }
+.import-table tr.row-valid { background: var(--success-bg); }
+.import-table tr.row-invalid { background: var(--error-bg); }
+.import-table .err-msg { color: var(--error); font-size: .8rem; }
+
+/* ========== Misc ========== */
+.text-muted { color: var(--text-2); }
+.text-sm { font-size: .8rem; }
+.mt-8 { margin-top: 8px; }
+.mt-16 { margin-top: 16px; }
+.mb-8 { margin-bottom: 8px; }
+.hidden { display: none !important; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.checkbox-label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.checkbox-label input { width: 16px; height: 16px; }
+
+/* ========== Edit Form (in dialog) ========== */
+.edit-form .form-field { margin-bottom: 12px; }
+.edit-form .form-field label { display: block; font-weight: 500; margin-bottom: 4px; font-size: .85rem; }
+.edit-form .form-field input, .edit-form .form-field select {
+  width: 100%; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: var(--radius);
+  font-size: .9rem; font-family: var(--font); outline: none; }
+.edit-form .form-field input:focus { border-color: var(--primary); }
+.edit-form .form-field .hint { font-size: .8rem; color: var(--text-3); margin-top: 2px; }
+.edit-form .form-field .field-error { font-size: .8rem; color: var(--error); margin-top: 2px; }
+
+/* ========== Grand total row ========== */
+tr.grand-total td { font-weight: 600; background: #f0f4ff; border-top: 2px solid var(--primary); }
+
+/* ========== Responsive ========== */
+@media (max-width: 768px) {
+  .app { padding: 10px; }
+  .form-row { flex-direction: column; align-items: stretch; }
+  .form-row label { min-width: auto; }
+  .filters { flex-direction: column; }
+  .filter-group { width: 100%; }
+  .filter-group input, .filter-group select { width: 100%; }
+  .toolbar { flex-direction: column; }
+  .toolbar-right { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <h1>PR 代码变更统计</h1>
+    <nav class="tabs" id="tab-nav">
+      <button class="tab active" data-tab="config">配置</button>
+      <button class="tab" data-tab="users">用户信息</button>
+      <button class="tab" data-tab="stats">统计数据</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ==================== 配置 ==================== -->
+    <section id="tab-config" class="tab-panel active">
+      <div class="card">
+        <h2>GitHub Token</h2>
+        <div class="form-row">
+          <label for="github-token">Token</label>
+          <input type="password" id="github-token" placeholder="ghp_... 或 github_pat_...">
+          <button class="btn btn-sm" onclick="toggleTokenVisibility('github-token')">显示</button>
+        </div>
+        <div class="form-row">
+          <label></label>
+          <button class="btn btn-primary btn-sm" onclick="saveToken('github')">保存</button>
+          <button class="btn btn-danger btn-sm" onclick="clearToken('github')">清除</button>
+          <button class="btn btn-sm" onclick="testConnection('github')">测试连接</button>
+          <span id="github-status"></span>
+        </div>
+        <div class="form-row">
+          <label></label>
+          <span class="text-sm text-muted">需要 repo 权限（私有仓库）或 public_repo 权限（公开仓库）。Fine-grained Token 需要 Pull requests 只读权限。</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>GitCode Token</h2>
+        <div class="form-row">
+          <label for="gitcode-token">Token</label>
+          <input type="password" id="gitcode-token" placeholder="私人令牌">
+          <button class="btn btn-sm" onclick="toggleTokenVisibility('gitcode-token')">显示</button>
+        </div>
+        <div class="form-row">
+          <label></label>
+          <button class="btn btn-primary btn-sm" onclick="saveToken('gitcode')">保存</button>
+          <button class="btn btn-danger btn-sm" onclick="clearToken('gitcode')">清除</button>
+          <button class="btn btn-sm" onclick="testConnection('gitcode')">测试连接</button>
+          <span id="gitcode-status"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>网络与代理</h2>
+        <p>本工具沿用操作系统或浏览器的代理设置，不提供应用内代理配置。</p>
+        <p>请确保您的浏览器可以正常访问以下地址：</p>
+        <ul>
+          <li><code>https://api.github.com</code></li>
+          <li><code>https://api.gitcode.com</code></li>
+        </ul>
+        <p class="mt-8 text-sm text-muted">如果在公司网络环境下无法访问，请配置系统代理或浏览器代理后重试。</p>
+      </div>
+    </section>
+
+    <!-- ==================== 用户信息 ==================== -->
+    <section id="tab-users" class="tab-panel">
+      <div class="toolbar">
+        <button class="btn btn-primary" onclick="showUserDialog()">新增</button>
+        <button class="btn" onclick="triggerImportCSV()">CSV 导入</button>
+        <button class="btn" onclick="downloadTemplate()">下载模板</button>
+        <input type="file" id="csv-file-input" accept=".csv" class="hidden" onchange="handleCSVFile(event)">
+        <div class="toolbar-right">
+          <span class="text-sm text-muted" id="user-count"></span>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>用户标识</th>
+              <th>显示名</th>
+              <th>邮箱</th>
+              <th>GitHub 账号</th>
+              <th>GitCode 账号</th>
+              <th>仓库地址</th>
+              <th>启用</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==================== 统计数据 ==================== -->
+    <section id="tab-stats" class="tab-panel">
+      <div class="card">
+        <div class="filters">
+          <div class="filter-group">
+            <label for="stat-start">开始日期</label>
+            <input type="date" id="stat-start">
+          </div>
+          <div class="filter-group">
+            <label for="stat-end">结束日期</label>
+            <input type="date" id="stat-end">
+          </div>
+          <div class="filter-group">
+            <label for="stat-platform">平台</label>
+            <select id="stat-platform">
+              <option value="">全部</option>
+              <option value="github">GitHub</option>
+              <option value="gitcode">GitCode</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="stat-user">用户</label>
+            <select id="stat-user"><option value="">全部</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="stat-repo">仓库</label>
+            <select id="stat-repo"><option value="">全部</option></select>
+          </div>
+          <div class="filter-group">
+            <label>&nbsp;</label>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-primary" id="btn-query" onclick="runQuery()">查询</button>
+              <button class="btn btn-danger hidden" id="btn-cancel" onclick="cancelQuery()">取消</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="progress-section" class="hidden">
+        <div class="progress-box">
+          <div class="progress-title" id="progress-title">准备查询...</div>
+          <ul class="progress-list" id="progress-list"></ul>
+        </div>
+      </div>
+
+      <div id="results-section" class="hidden">
+        <div class="toolbar">
+          <span class="text-sm text-muted" id="results-summary"></span>
+          <div class="toolbar-right">
+            <button class="btn btn-sm" onclick="exportCSV('summary')">导出汇总 CSV</button>
+            <button class="btn btn-sm" onclick="exportCSV('detail')">导出明细 CSV</button>
+          </div>
+        </div>
+
+        <h3 class="mb-8">汇总</h3>
+        <div class="table-wrap" style="max-height:400px; overflow-y:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>平台</th><th>用户</th><th>显示名</th><th>仓库</th>
+                <th>合并 PR 数</th><th>新增行</th><th>删除行</th><th>变更行</th><th>净增行</th><th>变更文件数</th><th>完整性</th>
+              </tr>
+            </thead>
+            <tbody id="summary-tbody"></tbody>
+          </table>
+        </div>
+
+        <h3 class="mb-8 mt-16">PR 明细</h3>
+        <div class="table-wrap" style="max-height:500px; overflow-y:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>平台</th><th>仓库</th><th>PR</th><th>作者</th><th>合并时间</th>
+                <th>目标分支</th><th>新增行</th><th>删除行</th><th>变更文件数</th><th>链接</th><th>完整性</th>
+              </tr>
+            </thead>
+            <tbody id="detail-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ==================== 用户编辑对话框 ==================== -->
+<dialog id="user-dialog">
+  <div class="dialog-header">
+    <h3 id="user-dialog-title">新增用户</h3>
+    <button class="dialog-close" onclick="closeUserDialog()">&times;</button>
+  </div>
+  <div class="dialog-body">
+    <form class="edit-form" id="user-form" onsubmit="return saveUser(event)">
+      <input type="hidden" id="edit-index" value="-1">
+      <div class="form-field">
+        <label for="edit-user-key">用户标识 *</label>
+        <input type="text" id="edit-user-key" required placeholder="唯一标识，如工号或英文名">
+      </div>
+      <div class="form-field">
+        <label for="edit-display-name">显示名</label>
+        <input type="text" id="edit-display-name" placeholder="姓名">
+      </div>
+      <div class="form-field">
+        <label for="edit-email">邮箱</label>
+        <input type="email" id="edit-email" placeholder="user@example.com">
+      </div>
+      <div class="form-field">
+        <label for="edit-github-login">GitHub 账号</label>
+        <input type="text" id="edit-github-login" placeholder="GitHub 用户名">
+      </div>
+      <div class="form-field">
+        <label for="edit-gitcode-login">GitCode 账号</label>
+        <input type="text" id="edit-gitcode-login" placeholder="GitCode 用户名">
+      </div>
+      <div class="form-field">
+        <label for="edit-repo-url">仓库地址 *</label>
+        <input type="text" id="edit-repo-url" required placeholder="https://github.com/owner/repo">
+        <div class="hint">支持 GitHub 和 GitCode 仓库 URL</div>
+      </div>
+      <div class="form-field">
+        <label class="checkbox-label">
+          <input type="checkbox" id="edit-enabled" checked>
+          启用统计
+        </label>
+      </div>
+    </form>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn" onclick="closeUserDialog()">取消</button>
+    <button class="btn btn-primary" onclick="document.getElementById('user-form').requestSubmit()">保存</button>
+  </div>
+</dialog>
+
+<!-- ==================== CSV 导入预览对话框 ==================== -->
+<dialog id="import-dialog">
+  <div class="dialog-header">
+    <h3>CSV 导入预览</h3>
+    <button class="dialog-close" onclick="closeImportDialog()">&times;</button>
+  </div>
+  <div class="dialog-body">
+    <div class="import-summary" id="import-summary"></div>
+    <div class="table-wrap">
+      <table class="import-table">
+        <thead id="import-thead"></thead>
+        <tbody id="import-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn" onclick="closeImportDialog()">取消</button>
+    <button class="btn btn-primary" id="btn-confirm-import" onclick="confirmImport()">确认导入</button>
+  </div>
+</dialog>
+
+<script>
+/* ================================================================
+ *  PR 代码变更统计 — 单文件实现
+ *  模块边界：Storage / CsvHelper / GitHubProvider / GitCodeProvider / StatsEngine / UI
+ * ================================================================ */
+
+// ========== Utilities ==========
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function maskToken(token) {
+  if (!token) return '';
+  if (token.length <= 8) return '••••••••';
+  return token.slice(0, 4) + '••••' + token.slice(-4);
+}
+
+function parseRepoUrl(url) {
+  if (!url) return null;
+  url = url.trim();
+  // HTTPS — allow dots in repo names, strip trailing .git
+  var m = url.match(/^https?:\/\/(github\.com|gitcode\.com)\/([^\/\s]+)\/([^\/\s]+)/);
+  if (m) { var repo = m[3].replace(/\.git$/, ''); return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: repo }; }
+  // SSH
+  m = url.match(/^git@(github\.com|gitcode\.com):([^\/\s]+)\/([^\/\s]+)/);
+  if (m) { var repo = m[3].replace(/\.git$/, ''); return { platform: m[1] === 'github.com' ? 'github' : 'gitcode', owner: m[2], repo: repo }; }
+  return null;
+}
+
+function repoKey(platform, owner, repo) {
+  return platform + ':' + owner + '/' + repo;
+}
+
+function formatNum(n) {
+  if (n == null) return '-';
+  return n.toLocaleString('en-US');
+}
+
+function formatDate(isoStr) {
+  if (!isoStr) return '-';
+  var d = new Date(isoStr);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0') + ' ' + String(d.getHours()).padStart(2,'0') + ':' +
+    String(d.getMinutes()).padStart(2,'0');
+}
+
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function monthStartStr() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-01';
+}
+
+/** Half-open interval: [startDate 00:00 local, endDate+1day 00:00 local) */
+function dateRangeToTimestamps(startStr, endStr) {
+  var start = new Date(startStr + 'T00:00:00');
+  var endNext = new Date(endStr + 'T00:00:00');
+  endNext.setDate(endNext.getDate() + 1);
+  return { start: start, end: endNext };
+}
+
+function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+
+// Simple concurrency limiter
+function createLimiter(concurrency, delayMs) {
+  var active = 0, queue = [];
+  function tryNext() {
+    if (active >= concurrency || queue.length === 0) return;
+    active++;
+    var item = queue.shift();
+    item.fn().then(item.resolve, item.reject).finally(function() {
+      active--;
+      if (delayMs > 0) { setTimeout(tryNext, delayMs); } else { tryNext(); }
+    });
+  }
+  return function limit(fn) {
+    return new Promise(function(resolve, reject) {
+      queue.push({ fn: fn, resolve: resolve, reject: reject });
+      tryNext();
+    });
+  };
+}
+
+
+// ========== Storage ==========
+
+var Storage = {
+  CONFIG_KEY: 'code-statistics.config.v1',
+  USERS_KEY: 'code-statistics.users.v1',
+  _available: null,
+
+  isAvailable: function() {
+    if (this._available !== null) return this._available;
+    try { localStorage.setItem('__cs_test__', '1'); localStorage.removeItem('__cs_test__'); this._available = true; }
+    catch(e) { this._available = false; }
+    return this._available;
+  },
+
+  loadConfig: function() {
+    if (!this.isAvailable()) return { githubToken: '', gitcodeToken: '' };
+    try { return JSON.parse(localStorage.getItem(this.CONFIG_KEY)) || { githubToken: '', gitcodeToken: '' }; }
+    catch(e) { return { githubToken: '', gitcodeToken: '' }; }
+  },
+
+  saveConfig: function(cfg) {
+    if (!this.isAvailable()) return;
+    localStorage.setItem(this.CONFIG_KEY, JSON.stringify(cfg));
+  },
+
+  loadUsers: function() {
+    if (!this.isAvailable()) return [];
+    try { return JSON.parse(localStorage.getItem(this.USERS_KEY)) || []; }
+    catch(e) { return []; }
+  },
+
+  saveUsers: function(users) {
+    if (!this.isAvailable()) return;
+    localStorage.setItem(this.USERS_KEY, JSON.stringify(users));
+  }
+};
+
+
+// ========== CSV Helper ==========
+
+var CsvHelper = {
+  TEMPLATE_HEADERS: ['user_key','display_name','email','github_login','gitcode_login','repository_url','enabled'],
+
+  /** Parse CSV text (RFC 4180) into array of arrays */
+  parse: function(text) {
+    var rows = [], row = [], field = '', inQuote = false, i = 0;
+    // Strip BOM
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    while (i < text.length) {
+      var c = text[i];
+      if (inQuote) {
+        if (c === '"') {
+          if (i + 1 < text.length && text[i+1] === '"') { field += '"'; i += 2; }
+          else { inQuote = false; i++; }
+        } else { field += c; i++; }
+      } else {
+        if (c === '"') { inQuote = true; i++; }
+        else if (c === ',') { row.push(field); field = ''; i++; }
+        else if (c === '\r') {
+          if (i + 1 < text.length && text[i+1] === '\n') i++;
+          row.push(field); field = ''; rows.push(row); row = []; i++;
+        }
+        else if (c === '\n') { row.push(field); field = ''; rows.push(row); row = []; i++; }
+        else { field += c; i++; }
+      }
+    }
+    if (field || row.length > 0) { row.push(field); rows.push(row); }
+    // Remove trailing empty rows
+    while (rows.length > 0 && rows[rows.length-1].every(function(f){return f==='';})) rows.pop();
+    return rows;
+  },
+
+  /** Sanitize cell for formula injection */
+  sanitize: function(val) {
+    if (typeof val !== 'string') return val;
+    if (/^[=+\-@\t\r]/.test(val)) return "'" + val;
+    return val;
+  },
+
+  /** Quote a field per RFC 4180 */
+  quoteField: function(val) {
+    var s = this.sanitize(String(val == null ? '' : val));
+    if (s.indexOf('"') >= 0 || s.indexOf(',') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  },
+
+  /** Generate CSV string with BOM */
+  generate: function(headers, rows) {
+    var self = this;
+    var lines = [headers.map(function(h){return self.quoteField(h);}).join(',')];
+    rows.forEach(function(row) {
+      lines.push(row.map(function(cell){return self.quoteField(cell);}).join(','));
+    });
+    return '﻿' + lines.join('\r\n') + '\r\n';
+  },
+
+  /** Trigger browser download */
+  download: function(filename, csvText) {
+    var blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a);
+    a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+};
+
+
+// ========== GitHub Provider ==========
+
+var GitHubProvider = {
+  BASE: 'https://api.github.com',
+
+  _headers: function(token) {
+    return { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  },
+
+  _fetch: async function(url, token, signal) {
+    var resp = await fetch(url, { headers: this._headers(token), signal: signal });
+    if (resp.status === 403 || resp.status === 429) {
+      var remaining = resp.headers.get('X-RateLimit-Remaining');
+      var resetAt = resp.headers.get('X-RateLimit-Reset');
+      if (remaining === '0' && resetAt) {
+        var waitMs = Math.max(0, (parseInt(resetAt) * 1000) - Date.now()) + 1000;
+        if (waitMs > 120000) throw new Error('GitHub 限流，需等待超过 2 分钟，请稍后重试');
+        await sleep(waitMs);
+        resp = await fetch(url, { headers: this._headers(token), signal: signal });
+      }
+    }
+    if (!resp.ok) {
+      var errBody = '';
+      try { errBody = (await resp.json()).message || ''; } catch(e) {}
+      throw new Error('GitHub API ' + resp.status + (errBody ? ': ' + errBody : ''));
+    }
+    return resp.json();
+  },
+
+  testConnection: async function(token) {
+    var data = await this._fetch(this.BASE + '/user', token);
+    return { login: data.login, name: data.name || data.login };
+  },
+
+  getDefaultBranch: async function(token, owner, repo, signal) {
+    var data = await this._fetch(this.BASE + '/repos/' + owner + '/' + repo, token, signal);
+    return data.default_branch;
+  },
+
+  /**
+   * Fetch merged PRs for a repo in date range.
+   * Uses search API, handles 1000 limit.
+   * Returns { prs: [...], partial: boolean }
+   */
+  fetchMergedPRs: async function(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress) {
+    var range = dateRangeToTimestamps(startDate, endDate);
+    // Use search API: merged date qualifier uses YYYY-MM-DD (UTC-ish)
+    // Expand window by 1 day on each side to catch timezone edge cases
+    var searchStart = new Date(range.start.getTime() - 86400000);
+    var searchEnd = new Date(range.end.getTime() + 86400000);
+    var sStr = searchStart.toISOString().slice(0,10);
+    var eStr = searchEnd.toISOString().slice(0,10);
+    var q = 'repo:' + owner + '/' + repo + ' type:pr is:merged merged:' + sStr + '..' + eStr;
+
+    var allItems = [], page = 1, totalCount = 0, partial = false;
+    while (true) {
+      var data = await this._fetch(
+        this.BASE + '/search/issues?q=' + encodeURIComponent(q) + '&per_page=100&page=' + page,
+        token, signal
+      );
+      if (page === 1) totalCount = data.total_count;
+      // FCR-4: GitHub returns incomplete_results=true when search timed out
+      if (data.incomplete_results) partial = true;
+      allItems = allItems.concat(data.items);
+      if (onProgress) onProgress('搜索 PR 中', allItems.length, Math.min(totalCount, 1000));
+      if (allItems.length >= totalCount || allItems.length >= 1000 || data.items.length < 100) break;
+      page++;
+      await sleep(2200); // Search rate limit: 30/min → ~2s between requests
+    }
+    if (totalCount > 1000) partial = true;
+    var partialReason = '';
+    if (partial) {
+      if (totalCount > 1000) partialReason = '超过 1000 条搜索上限';
+      else partialReason = '搜索结果不完整';
+    }
+
+    // Fetch PR details with concurrency control
+    var limiter = createLimiter(5, 100);
+    var prs = [], detailDone = 0;
+    var self = this;
+    var detailPromises = allItems.map(function(item) {
+      return limiter(function() {
+        return self._fetch(self.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + item.number, token, signal);
+      }).then(function(detail) {
+        detailDone++;
+        if (onProgress) onProgress('获取 PR 详情', detailDone, allItems.length);
+        // Filter: default branch + exact time range
+        var mergedAt = detail.merged_at ? new Date(detail.merged_at) : null;
+        if (!mergedAt) return;
+        if (mergedAt < range.start || mergedAt >= range.end) return;
+        if (detail.base && detail.base.ref !== defaultBranch) return;
+        // FCR-5: validate all three metrics; mark partial if any are unparsable
+        var ghAdd = parseInt(detail.additions, 10);
+        var ghDel = parseInt(detail.deletions, 10);
+        var ghFiles = parseInt(detail.changed_files, 10);
+        var ghUnparsable = isNaN(ghAdd) || isNaN(ghDel) || isNaN(ghFiles);
+        prs.push({
+          platform: 'github',
+          repo: owner + '/' + repo,
+          number: detail.number,
+          author: detail.user ? detail.user.login : '',
+          mergedAt: detail.merged_at,
+          baseBranch: detail.base ? detail.base.ref : '',
+          additions: isNaN(ghAdd) ? 0 : ghAdd,
+          deletions: isNaN(ghDel) ? 0 : ghDel,
+          changedFiles: isNaN(ghFiles) ? 0 : ghFiles,
+          completeness: ghUnparsable ? 'partial' : 'full',
+          url: 'https://github.com/' + owner + '/' + repo + '/pull/' + detail.number
+        });
+      }).catch(function(err) {
+        detailDone++;
+        if (onProgress) onProgress('获取 PR 详情', detailDone, allItems.length);
+        // Record failed PR
+        prs.push({
+          platform: 'github', repo: owner + '/' + repo, number: item.number,
+          author: '', mergedAt: '', baseBranch: '', additions: 0, deletions: 0, changedFiles: 0,
+          completeness: 'failed', url: 'https://github.com/' + owner + '/' + repo + '/pull/' + item.number
+        });
+      });
+    });
+    await Promise.all(detailPromises);
+    return { prs: prs, partial: partial, partialReason: partialReason };
+  }
+};
+
+
+// ========== GitCode Provider ==========
+
+var GitCodeProvider = {
+  BASE: 'https://api.gitcode.com/api/v5',
+
+  _headers: function(token) {
+    return { 'Authorization': 'Bearer ' + token };
+  },
+
+  _fetch: async function(url, token, signal) {
+    var resp = await fetch(url, { headers: this._headers(token), signal: signal });
+    if (resp.status === 403 || resp.status === 429) {
+      throw new Error('GitCode API 限流 (' + resp.status + ')，请稍后重试');
+    }
+    if (!resp.ok) {
+      var errBody = '';
+      try { var j = await resp.json(); errBody = j.message || j.error || ''; } catch(e) {}
+      throw new Error('GitCode API ' + resp.status + (errBody ? ': ' + errBody : ''));
+    }
+    return resp.json();
+  },
+
+  testConnection: async function(token) {
+    var data = await this._fetch(this.BASE + '/user', token);
+    return { login: data.login, name: data.name || data.login };
+  },
+
+  getDefaultBranch: async function(token, owner, repo, signal) {
+    var data = await this._fetch(this.BASE + '/repos/' + owner + '/' + repo, token, signal);
+    return data.default_branch;
+  },
+
+  /**
+   * Fetch merged PRs for a repo in date range.
+   * Uses list API with base filter + local merged_at check.
+   */
+  fetchMergedPRs: async function(token, owner, repo, defaultBranch, startDate, endDate, signal, onProgress) {
+    var range = dateRangeToTimestamps(startDate, endDate);
+    var allPRs = [], page = 1;
+
+    // Paginate through all merged PRs for default branch
+    while (true) {
+      if (onProgress) onProgress('获取 PR 列表', (page - 1) * 100, -1);
+      var url = this.BASE + '/repos/' + owner + '/' + repo + '/pulls' +
+        '?state=merged&base=' + encodeURIComponent(defaultBranch) +
+        '&per_page=100&page=' + page;
+      var items = await this._fetch(url, token, signal);
+      if (!Array.isArray(items)) items = [];
+      allPRs = allPRs.concat(items);
+      if (items.length < 100) break;
+      page++;
+      await sleep(200);
+    }
+
+    // Filter by merged_at range
+    var inRange = allPRs.filter(function(pr) {
+      if (!pr.merged_at) return false;
+      var t = new Date(pr.merged_at);
+      return t >= range.start && t < range.end;
+    });
+
+    // Get stats for each PR
+    var limiter = createLimiter(5, 100);
+    var prs = [], detailDone = 0;
+    var self = this;
+    var detailPromises = inRange.map(function(pr) {
+      return limiter(function() {
+        return self._getPRStats(token, owner, repo, pr.number, signal);
+      }).then(function(stats) {
+        detailDone++;
+        if (onProgress) onProgress('获取 PR 详情', detailDone, inRange.length);
+        prs.push({
+          platform: 'gitcode',
+          repo: owner + '/' + repo,
+          number: pr.number,
+          author: pr.user ? pr.user.login : (pr.author ? pr.author.login : ''),
+          mergedAt: pr.merged_at,
+          baseBranch: pr.base ? pr.base.ref : defaultBranch,
+          additions: stats.additions,
+          deletions: stats.deletions,
+          changedFiles: stats.changedFiles,
+          completeness: stats.completeness,
+          url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
+        });
+      }).catch(function(err) {
+        detailDone++;
+        if (onProgress) onProgress('获取 PR 详情', detailDone, inRange.length);
+        prs.push({
+          platform: 'gitcode', repo: owner + '/' + repo, number: pr.number,
+          author: pr.user ? pr.user.login : '', mergedAt: pr.merged_at,
+          baseBranch: defaultBranch, additions: 0, deletions: 0, changedFiles: 0,
+          completeness: 'failed',
+          url: pr.html_url || pr.web_url || ('https://gitcode.com/' + owner + '/' + repo + '/merge_requests/' + pr.number)
+        });
+      });
+    });
+    await Promise.all(detailPromises);
+    return { prs: prs, partial: false };
+  },
+
+  /** Get PR code stats: try detail fields first, then files endpoint */
+  _getPRStats: async function(token, owner, repo, number, signal) {
+    // Try PR detail first — validate numeric types (API may return strings)
+    try {
+      var detail = await this._fetch(
+        this.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number, token, signal
+      );
+      var dAdd = parseInt(detail.additions, 10);
+      var dDel = parseInt(detail.deletions, 10);
+      var dFiles = parseInt(detail.changed_files, 10);
+      // FCR-5: all three metrics must be valid for the detail shortcut
+      if (!isNaN(dAdd) && !isNaN(dDel) && !isNaN(dFiles)) {
+        return {
+          additions: dAdd,
+          deletions: dDel,
+          changedFiles: dFiles,
+          completeness: 'full'
+        };
+      }
+    } catch(e) { /* fallback to files */ }
+
+    // Files endpoint
+    var files = await this._fetch(
+      this.BASE + '/repos/' + owner + '/' + repo + '/pulls/' + number + '/files', token, signal
+    );
+    if (!Array.isArray(files)) return { additions: 0, deletions: 0, changedFiles: 0, completeness: 'failed' };
+    var additions = 0, deletions = 0, tooLarge = false, hasUnparsable = false;
+    files.forEach(function(f) {
+      // too_large can be at file level or nested under patch
+      if (f.too_large || (f.patch && f.patch.too_large)) tooLarge = true;
+      var fa = parseInt(f.additions, 10);
+      var fd = parseInt(f.deletions, 10);
+      if (isNaN(fa) || isNaN(fd)) { hasUnparsable = true; return; }
+      additions += fa;
+      deletions += fd;
+    });
+    return {
+      additions: additions,
+      deletions: deletions,
+      changedFiles: files.length,
+      completeness: (tooLarge || hasUnparsable) ? 'partial' : 'full'
+    };
+  }
+};
+
+
+// ========== Statistics Engine ==========
+
+var StatsEngine = {
+  currentPRs: [],       // all fetched PRs (raw detail)
+  summaryRows: [],      // aggregated summary
+  filteredPRs: [],      // after user/repo filter
+  repoStatuses: [],     // per-repo status from last query
+  failedRepos: [],      // repos that failed entirely (FC-2)
+  partialRepos: [],     // repos with partial data (FCR-1: survives filtering)
+
+  /**
+   * Build unique repo list from enabled users and current filters
+   */
+  buildRepoList: function(users, filters) {
+    var repos = {};
+    users.forEach(function(u) {
+      if (!u.enabled) return;
+      if (filters.user && u.user_key !== filters.user) return;
+      var parsed = parseRepoUrl(u.repository_url);
+      if (!parsed) return;
+      if (filters.platform && parsed.platform !== filters.platform) return;
+      if (filters.repo && (parsed.owner + '/' + parsed.repo) !== filters.repo) return;
+      var key = repoKey(parsed.platform, parsed.owner, parsed.repo);
+      if (!repos[key]) {
+        repos[key] = { platform: parsed.platform, owner: parsed.owner, repo: parsed.repo, key: key };
+      }
+    });
+    return Object.values(repos);
+  },
+
+  /**
+   * Map PRs to users: by platform + repo + login (FC-1 fix).
+   * Only matches users who are explicitly associated with that repo.
+   * Unmatched PRs are flagged so they can be excluded from user totals.
+   */
+  mapPRsToUsers: function(prs, users) {
+    // Build map: "platform:login:owner/repo" → {user_key, display_name}
+    // FCR-3: only enabled users participate in attribution
+    var loginRepoMap = {};
+    users.forEach(function(u) {
+      if (u.enabled === false) return;
+      var parsed = parseRepoUrl(u.repository_url);
+      if (!parsed) return;
+      var repoStr = parsed.owner + '/' + parsed.repo;
+      if (u.github_login && parsed.platform === 'github') {
+        var gk = 'github:' + u.github_login.toLowerCase() + ':' + repoStr;
+        if (!loginRepoMap[gk]) loginRepoMap[gk] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
+      }
+      if (u.gitcode_login && parsed.platform === 'gitcode') {
+        var ck = 'gitcode:' + u.gitcode_login.toLowerCase() + ':' + repoStr;
+        if (!loginRepoMap[ck]) loginRepoMap[ck] = { user_key: u.user_key, display_name: u.display_name || u.user_key };
+      }
+    });
+    prs.forEach(function(pr) {
+      var lk = pr.platform + ':' + (pr.author || '').toLowerCase() + ':' + pr.repo;
+      var match = loginRepoMap[lk];
+      if (match) {
+        pr.userKey = match.user_key;
+        pr.displayName = match.display_name;
+        pr.matched = true;
+      } else {
+        pr.userKey = '';
+        pr.displayName = pr.author || '(未匹配)';
+        pr.matched = false;
+      }
+    });
+  },
+
+  /**
+   * Aggregate PRs into summary rows: one per (platform, userKey, repo).
+   * Only includes matched PRs in named-user rows; unmatched go to "(未匹配)" group.
+   */
+  aggregate: function(prs) {
+    var groups = {};
+    prs.forEach(function(pr) {
+      var userLabel = pr.matched ? pr.userKey : ('⚠ ' + (pr.author || '未知'));
+      var displayLabel = pr.matched ? pr.displayName : (pr.author || '(未匹配)');
+      var key = pr.platform + '|' + userLabel + '|' + pr.repo;
+      if (!groups[key]) {
+        groups[key] = {
+          platform: pr.platform,
+          userKey: userLabel,
+          displayName: displayLabel,
+          repo: pr.repo,
+          matched: !!pr.matched,
+          prCount: 0, additions: 0, deletions: 0, changedFiles: 0,
+          hasPartial: false, hasFailed: false
+        };
+      }
+      var g = groups[key];
+      g.prCount++;
+      g.additions += pr.additions;
+      g.deletions += pr.deletions;
+      g.changedFiles += pr.changedFiles;
+      if (pr.completeness === 'partial') g.hasPartial = true;
+      if (pr.completeness === 'failed') g.hasFailed = true;
+      if (pr.repoPartial) g.hasPartial = true;
+    });
+    return Object.values(groups);
+  },
+
+  /** Apply user/repo filters to current PRs for display */
+  applyDisplayFilters: function(prs, filters) {
+    return prs.filter(function(pr) {
+      if (filters.user && pr.userKey !== filters.user) return false;
+      if (filters.platform && pr.platform !== filters.platform) return false;
+      if (filters.repo && pr.repo !== filters.repo) return false;
+      return true;
+    });
+  },
+
+  completenessLabel: function(row) {
+    if (row.hasFailed || row.completeness === 'failed') return '失败';
+    if (row.hasPartial || row.completeness === 'partial') return '部分';
+    return '完整';
+  },
+
+  completenessClass: function(row) {
+    if (row.hasFailed || row.completeness === 'failed') return 'completeness-failed';
+    if (row.hasPartial || row.completeness === 'partial') return 'completeness-partial';
+    return 'completeness-full';
+  }
+};
+
+
+// ========== Query Controller ==========
+
+var queryAbort = null;
+
+async function runQuery() {
+  var startDate = document.getElementById('stat-start').value;
+  var endDate = document.getElementById('stat-end').value;
+  if (!startDate || !endDate) { alert('请选择开始和结束日期'); return; }
+  if (startDate > endDate) { alert('开始日期不能晚于结束日期'); return; }
+
+  var config = Storage.loadConfig();
+  var users = Storage.loadUsers();
+  if (users.length === 0) { alert('请先在"用户信息"页签添加用户和仓库'); return; }
+
+  var filters = {
+    platform: document.getElementById('stat-platform').value,
+    user: document.getElementById('stat-user').value,
+    repo: document.getElementById('stat-repo').value
+  };
+
+  var repos = StatsEngine.buildRepoList(users, filters);
+  if (repos.length === 0) { alert('当前筛选条件下没有需要查询的仓库'); return; }
+
+  // Check tokens
+  var needGH = repos.some(function(r) { return r.platform === 'github'; });
+  var needGC = repos.some(function(r) { return r.platform === 'gitcode'; });
+  if (needGH && !config.githubToken) { alert('请先在"配置"页签设置 GitHub Token'); return; }
+  if (needGC && !config.gitcodeToken) { alert('请先在"配置"页签设置 GitCode Token'); return; }
+
+  // UI state: running
+  queryAbort = new AbortController();
+  document.getElementById('btn-query').classList.add('hidden');
+  document.getElementById('btn-cancel').classList.remove('hidden');
+  document.getElementById('progress-section').classList.remove('hidden');
+  document.getElementById('results-section').classList.add('hidden');
+
+  var progressList = document.getElementById('progress-list');
+  progressList.innerHTML = '';
+  var repoStatuses = repos.map(function(r) {
+    var li = document.createElement('li');
+    li.innerHTML = '<span class="icon">⏳</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 等待中</span>';
+    progressList.appendChild(li);
+    return { repo: r, li: li, status: 'pending', error: null };
+  });
+
+  var allPRs = [], anyPartial = false;
+  var completedCount = 0;
+
+  for (var i = 0; i < repoStatuses.length; i++) {
+    if (queryAbort.signal.aborted) break;
+    var rs = repoStatuses[i];
+    var r = rs.repo;
+    var token = r.platform === 'github' ? config.githubToken : config.gitcodeToken;
+    var provider = r.platform === 'github' ? GitHubProvider : GitCodeProvider;
+
+    rs.li.innerHTML = '<span class="icon">⏳</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 获取中...</span>';
+    document.getElementById('progress-title').textContent = '正在查询... (' + completedCount + '/' + repos.length + ' 仓库)';
+
+    try {
+      var defaultBranch = await provider.getDefaultBranch(token, r.owner, r.repo, queryAbort.signal);
+      var result = await provider.fetchMergedPRs(
+        token, r.owner, r.repo, defaultBranch, startDate, endDate, queryAbort.signal,
+        function(stage, done, total) {
+          var totalStr = total < 0 ? '' : ('/' + total);
+          rs.li.innerHTML = '<span class="icon">⏳</span><span>' +
+            escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' +
+            escapeHtml(stage) + ' (' + done + totalStr + ')</span>';
+        }
+      );
+      // FC-2: propagate repo-level partial to each PR so it reaches summary/export
+      if (result.partial) {
+        result.prs.forEach(function(pr) { pr.repoPartial = true; });
+      }
+      allPRs = allPRs.concat(result.prs);
+      var partialNote = result.partial ? (' ⚠️ 部分统计（' + (result.partialReason || '结果可能不完整') + '）') : '';
+      rs.li.innerHTML = '<span class="icon">✅</span><span>' +
+        escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + result.prs.length + ' 个已合并 PR' + partialNote + '</span>';
+      rs.status = result.partial ? 'partial' : 'ok';
+      rs.partialReason = result.partialReason || '';
+    } catch(err) {
+      if (queryAbort.signal.aborted) {
+        rs.li.innerHTML = '<span class="icon">⏸</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — 已取消</span>';
+        rs.status = 'cancelled';
+      } else {
+        rs.li.innerHTML = '<span class="icon">❌</span><span>' + escapeHtml(r.platform + ': ' + r.owner + '/' + r.repo) + ' — ' + escapeHtml(err.message) + '</span>';
+        rs.status = 'failed';
+        rs.error = err.message;
+      }
+    }
+    completedCount++;
+  }
+
+  document.getElementById('progress-title').textContent =
+    queryAbort.signal.aborted ? '查询已取消' : '查询完成 (' + completedCount + '/' + repos.length + ' 仓库)';
+
+  // Map PRs to users and aggregate
+  StatsEngine.mapPRsToUsers(allPRs, users);
+  StatsEngine.currentPRs = allPRs;
+  StatsEngine.repoStatuses = repoStatuses;
+  // FC-2: track repos that failed entirely so export can include them
+  StatsEngine.failedRepos = repoStatuses
+    .filter(function(rs) { return rs.status === 'failed'; })
+    .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo, error: rs.error }; });
+  // FCR-1: track repos with partial data independently so status survives filtering
+  StatsEngine.partialRepos = repoStatuses
+    .filter(function(rs) { return rs.status === 'partial'; })
+    .map(function(rs) { return { platform: rs.repo.platform, repo: rs.repo.owner + '/' + rs.repo.repo, reason: rs.partialReason || '结果可能不完整' }; });
+
+  // Apply display filters and render
+  renderResults(filters);
+
+  // UI state: done
+  document.getElementById('btn-query').classList.remove('hidden');
+  document.getElementById('btn-cancel').classList.add('hidden');
+  queryAbort = null;
+}
+
+function cancelQuery() {
+  if (queryAbort) queryAbort.abort();
+}
+
+function renderResults(filters) {
+  var prs = StatsEngine.applyDisplayFilters(StatsEngine.currentPRs, filters);
+  var summary = StatsEngine.aggregate(prs);
+  StatsEngine.summaryRows = summary;
+  StatsEngine.filteredPRs = prs;
+
+  // Sort: platform, userKey, repo
+  summary.sort(function(a, b) {
+    return (a.platform + a.userKey + a.repo).localeCompare(b.platform + b.userKey + b.repo);
+  });
+  prs.sort(function(a, b) {
+    if (a.repo !== b.repo) return a.repo.localeCompare(b.repo);
+    return (a.mergedAt || '').localeCompare(b.mergedAt || '');
+  });
+
+  // Grand totals — only from matched users
+  var matchedSummary = summary.filter(function(r) { return r.matched; });
+  var totals = { prCount: 0, additions: 0, deletions: 0, changedFiles: 0 };
+  matchedSummary.forEach(function(r) {
+    totals.prCount += r.prCount;
+    totals.additions += r.additions;
+    totals.deletions += r.deletions;
+    totals.changedFiles += r.changedFiles;
+  });
+
+  // Render summary table
+  var stbody = document.getElementById('summary-tbody');
+  if (summary.length === 0) {
+    stbody.innerHTML = '<tr class="empty-row"><td colspan="11">无数据</td></tr>';
+  } else {
+    var html = '';
+    summary.forEach(function(r) {
+      html += '<tr>' +
+        '<td>' + escapeHtml(r.platform) + '</td>' +
+        '<td>' + escapeHtml(r.userKey) + '</td>' +
+        '<td>' + escapeHtml(r.displayName) + '</td>' +
+        '<td>' + escapeHtml(r.repo) + '</td>' +
+        '<td class="num">' + formatNum(r.prCount) + '</td>' +
+        '<td class="num">' + formatNum(r.additions) + '</td>' +
+        '<td class="num">' + formatNum(r.deletions) + '</td>' +
+        '<td class="num">' + formatNum(r.additions + r.deletions) + '</td>' +
+        '<td class="num">' + formatNum(r.additions - r.deletions) + '</td>' +
+        '<td class="num">' + formatNum(r.changedFiles) + '</td>' +
+        '<td class="' + StatsEngine.completenessClass(r) + '">' + StatsEngine.completenessLabel(r) + '</td>' +
+        '</tr>';
+    });
+    // Grand total
+    html += '<tr class="grand-total">' +
+      '<td colspan="4">合计</td>' +
+      '<td class="num">' + formatNum(totals.prCount) + '</td>' +
+      '<td class="num">' + formatNum(totals.additions) + '</td>' +
+      '<td class="num">' + formatNum(totals.deletions) + '</td>' +
+      '<td class="num">' + formatNum(totals.additions + totals.deletions) + '</td>' +
+      '<td class="num">' + formatNum(totals.additions - totals.deletions) + '</td>' +
+      '<td class="num">' + formatNum(totals.changedFiles) + '</td>' +
+      '<td></td></tr>';
+    stbody.innerHTML = html;
+  }
+
+  // Render detail table
+  var dtbody = document.getElementById('detail-tbody');
+  if (prs.length === 0) {
+    dtbody.innerHTML = '<tr class="empty-row"><td colspan="11">无数据</td></tr>';
+  } else {
+    var dhtml = '';
+    prs.forEach(function(pr) {
+      dhtml += '<tr>' +
+        '<td>' + escapeHtml(pr.platform) + '</td>' +
+        '<td>' + escapeHtml(pr.repo) + '</td>' +
+        '<td class="num">#' + pr.number + '</td>' +
+        '<td>' + escapeHtml(pr.displayName || pr.author) + '</td>' +
+        '<td>' + formatDate(pr.mergedAt) + '</td>' +
+        '<td>' + escapeHtml(pr.baseBranch) + '</td>' +
+        '<td class="num">' + formatNum(pr.additions) + '</td>' +
+        '<td class="num">' + formatNum(pr.deletions) + '</td>' +
+        '<td class="num">' + formatNum(pr.changedFiles) + '</td>' +
+        '<td><a href="' + escapeHtml(pr.url) + '" target="_blank" rel="noopener">查看</a></td>' +
+        '<td class="' + StatsEngine.completenessClass(pr) + '">' + StatsEngine.completenessLabel(pr) + '</td>' +
+        '</tr>';
+    });
+    dtbody.innerHTML = dhtml;
+  }
+
+  // Results summary text
+  var unmatchedCount = summary.filter(function(r) { return !r.matched; }).length;
+  var failedCount = StatsEngine.failedRepos.length;
+  var partialCount = StatsEngine.partialRepos.length;
+  var summaryText = '共 ' + prs.length + ' 个 PR，' + summary.length + ' 个用户-仓库组合';
+  if (unmatchedCount > 0) summaryText += '（含 ' + unmatchedCount + ' 个未匹配作者）';
+  if (partialCount > 0) summaryText += '，' + partialCount + ' 个仓库为部分统计';
+  if (failedCount > 0) summaryText += '，' + failedCount + ' 个仓库查询失败';
+  document.getElementById('results-summary').textContent = summaryText;
+
+  document.getElementById('results-section').classList.remove('hidden');
+}
+
+
+// ========== CSV Export ==========
+
+function exportCSV(type) {
+  if (type === 'summary') {
+    var headers = ['平台', '用户', '显示名', '仓库', '合并PR数', '新增行', '删除行', '变更行', '净增行', '变更文件数', '完整性'];
+    var rows = StatsEngine.summaryRows.map(function(r) {
+      return [r.platform, r.userKey, r.displayName, r.repo, r.prCount, r.additions, r.deletions,
+        r.additions + r.deletions, r.additions - r.deletions, r.changedFiles, StatsEngine.completenessLabel(r)];
+    });
+    // FCR-1: append partial repos so export never silently omits partial status
+    StatsEngine.partialRepos.forEach(function(pr) {
+      rows.push([pr.platform, '', '', pr.repo, '', '', '', '', '', '', '部分（' + (pr.reason || '结果可能不完整') + '）']);
+    });
+    // FC-2: append failed repos so export never silently omits failures
+    StatsEngine.failedRepos.forEach(function(fr) {
+      rows.push([fr.platform, '', '', fr.repo, 0, 0, 0, 0, 0, 0, '失败: ' + fr.error]);
+    });
+    var csv = CsvHelper.generate(headers, rows);
+    CsvHelper.download('PR代码变更统计_汇总_' + todayStr() + '.csv', csv);
+  } else {
+    var headers = ['平台', '仓库', 'PR编号', '作者', '用户标识', '显示名', '合并时间', '目标分支',
+      '新增行', '删除行', '变更文件数', '链接', '完整性'];
+    var rows = StatsEngine.filteredPRs.map(function(pr) {
+      return [pr.platform, pr.repo, pr.number, pr.author, pr.userKey || '', pr.displayName || pr.author,
+        pr.mergedAt || '', pr.baseBranch, pr.additions, pr.deletions, pr.changedFiles,
+        pr.url, StatsEngine.completenessLabel(pr)];
+    });
+    var csv = CsvHelper.generate(headers, rows);
+    CsvHelper.download('PR代码变更统计_明细_' + todayStr() + '.csv', csv);
+  }
+}
+
+
+// ========== Token Management ==========
+
+function saveToken(platform) {
+  var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
+  var token = document.getElementById(inputId).value.trim();
+  var config = Storage.loadConfig();
+  if (platform === 'github') config.githubToken = token;
+  else config.gitcodeToken = token;
+  Storage.saveConfig(config);
+  showTokenStatus(platform, 'ok', '已保存' + (token ? ' (' + maskToken(token) + ')' : ''));
+}
+
+function clearToken(platform) {
+  var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
+  document.getElementById(inputId).value = '';
+  var config = Storage.loadConfig();
+  if (platform === 'github') config.githubToken = '';
+  else config.gitcodeToken = '';
+  Storage.saveConfig(config);
+  showTokenStatus(platform, 'ok', '已清除');
+}
+
+async function testConnection(platform) {
+  var inputId = platform === 'github' ? 'github-token' : 'gitcode-token';
+  var token = document.getElementById(inputId).value.trim();
+  if (!token) {
+    // Try saved token
+    var config = Storage.loadConfig();
+    token = platform === 'github' ? config.githubToken : config.gitcodeToken;
+  }
+  if (!token) { showTokenStatus(platform, 'err', 'Token 为空'); return; }
+  showTokenStatus(platform, 'warn', '测试中...');
+  try {
+    var provider = platform === 'github' ? GitHubProvider : GitCodeProvider;
+    var result = await provider.testConnection(token);
+    showTokenStatus(platform, 'ok', '已连接: ' + result.login + (result.name !== result.login ? ' (' + result.name + ')' : ''));
+  } catch(err) {
+    var msg = err.message || '连接失败';
+    if (msg.indexOf('401') >= 0) msg = '认证失败，请检查 Token';
+    else if (msg.indexOf('403') >= 0 || msg.indexOf('429') >= 0) msg = '权限不足或请求限流';
+    else if (msg.indexOf('Failed to fetch') >= 0 || msg.indexOf('NetworkError') >= 0) msg = '网络错误，请检查代理和网络连接';
+    showTokenStatus(platform, 'err', msg);
+  }
+}
+
+function showTokenStatus(platform, level, msg) {
+  var el = document.getElementById(platform + '-status');
+  el.className = 'status status-' + level;
+  el.textContent = msg;
+}
+
+function toggleTokenVisibility(inputId) {
+  var input = document.getElementById(inputId);
+  var btn = input.parentElement.querySelector('.btn');
+  if (input.type === 'password') { input.type = 'text'; btn.textContent = '隐藏'; }
+  else { input.type = 'password'; btn.textContent = '显示'; }
+}
+
+
+// ========== User CRUD ==========
+
+function renderUsers() {
+  var users = Storage.loadUsers();
+  var tbody = document.getElementById('users-tbody');
+  if (users.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">暂无数据，点击"新增"或"CSV 导入"添加用户</td></tr>';
+  } else {
+    var html = '';
+    users.forEach(function(u, i) {
+      html += '<tr>' +
+        '<td>' + escapeHtml(u.user_key) + '</td>' +
+        '<td>' + escapeHtml(u.display_name || '') + '</td>' +
+        '<td>' + escapeHtml(u.email || '') + '</td>' +
+        '<td>' + escapeHtml(u.github_login || '') + '</td>' +
+        '<td>' + escapeHtml(u.gitcode_login || '') + '</td>' +
+        '<td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(u.repository_url) + '">' + escapeHtml(u.repository_url) + '</td>' +
+        '<td>' + (u.enabled ? '✓' : '✗') + '</td>' +
+        '<td class="actions">' +
+          '<button class="btn btn-sm" onclick="showUserDialog(' + i + ')">编辑</button> ' +
+          '<button class="btn btn-sm btn-danger" onclick="deleteUser(' + i + ')">删除</button>' +
+        '</td></tr>';
+    });
+    tbody.innerHTML = html;
+  }
+  document.getElementById('user-count').textContent = users.length + ' 条记录';
+  refreshFilterDropdowns();
+}
+
+function showUserDialog(index) {
+  var dlg = document.getElementById('user-dialog');
+  var isEdit = (index !== undefined && index >= 0);
+  document.getElementById('user-dialog-title').textContent = isEdit ? '编辑用户' : '新增用户';
+  document.getElementById('edit-index').value = isEdit ? index : -1;
+  if (isEdit) {
+    var u = Storage.loadUsers()[index];
+    document.getElementById('edit-user-key').value = u.user_key || '';
+    document.getElementById('edit-display-name').value = u.display_name || '';
+    document.getElementById('edit-email').value = u.email || '';
+    document.getElementById('edit-github-login').value = u.github_login || '';
+    document.getElementById('edit-gitcode-login').value = u.gitcode_login || '';
+    document.getElementById('edit-repo-url').value = u.repository_url || '';
+    document.getElementById('edit-enabled').checked = u.enabled !== false;
+  } else {
+    document.getElementById('user-form').reset();
+    document.getElementById('edit-enabled').checked = true;
+  }
+  dlg.showModal();
+}
+
+function closeUserDialog() {
+  document.getElementById('user-dialog').close();
+}
+
+function saveUser(event) {
+  event.preventDefault();
+  var idx = parseInt(document.getElementById('edit-index').value);
+  var repoUrl = document.getElementById('edit-repo-url').value.trim();
+  var parsed = parseRepoUrl(repoUrl);
+  if (!parsed) { alert('仓库地址格式不正确，请输入 GitHub 或 GitCode 的仓库 URL'); return false; }
+
+  var record = {
+    user_key: document.getElementById('edit-user-key').value.trim(),
+    display_name: document.getElementById('edit-display-name').value.trim(),
+    email: document.getElementById('edit-email').value.trim(),
+    github_login: document.getElementById('edit-github-login').value.trim(),
+    gitcode_login: document.getElementById('edit-gitcode-login').value.trim(),
+    repository_url: repoUrl,
+    enabled: document.getElementById('edit-enabled').checked
+  };
+
+  var users = Storage.loadUsers();
+  if (idx >= 0) { users[idx] = record; }
+  else { users.push(record); }
+  Storage.saveUsers(users);
+  closeUserDialog();
+  renderUsers();
+  return false;
+}
+
+function deleteUser(index) {
+  if (!confirm('确定删除此记录？')) return;
+  var users = Storage.loadUsers();
+  users.splice(index, 1);
+  Storage.saveUsers(users);
+  renderUsers();
+}
+
+
+// ========== CSV Import ==========
+
+function triggerImportCSV() {
+  document.getElementById('csv-file-input').click();
+}
+
+var pendingImportRows = [];
+
+function handleCSVFile(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var text = e.target.result;
+    var rows = CsvHelper.parse(text);
+    if (rows.length < 2) { alert('CSV 文件为空或只有表头'); event.target.value = ''; return; }
+
+    // Parse header
+    var header = rows[0].map(function(h) { return h.trim().toLowerCase(); });
+    var EXPECTED = CsvHelper.TEMPLATE_HEADERS;
+    var colMap = {};
+    EXPECTED.forEach(function(col) {
+      var idx = header.indexOf(col);
+      colMap[col] = idx;
+    });
+    if (colMap['user_key'] < 0 || colMap['repository_url'] < 0) {
+      alert('CSV 缺少必要列：user_key 和 repository_url');
+      event.target.value = '';
+      return;
+    }
+
+    // Validate rows
+    var validRows = [], invalidRows = [];
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      var record = {};
+      EXPECTED.forEach(function(col) {
+        record[col] = colMap[col] >= 0 && colMap[col] < r.length ? r[colMap[col]].trim() : '';
+      });
+      // enabled: default true
+      if (record.enabled === '') record.enabled = true;
+      else record.enabled = record.enabled !== '0' && record.enabled.toLowerCase() !== 'false' && record.enabled.toLowerCase() !== 'no';
+
+      var errors = [];
+      if (!record.user_key) errors.push('user_key 为空');
+      if (!record.repository_url) errors.push('repository_url 为空');
+      else if (!parseRepoUrl(record.repository_url)) errors.push('仓库地址格式不正确');
+
+      if (errors.length > 0) {
+        invalidRows.push({ row: i + 1, record: record, errors: errors });
+      } else {
+        validRows.push({ row: i + 1, record: record });
+      }
+    }
+
+    // Show preview dialog
+    showImportPreview(validRows, invalidRows);
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function showImportPreview(validRows, invalidRows) {
+  pendingImportRows = validRows;
+  document.getElementById('import-summary').innerHTML =
+    '有效: <span class="ok">' + validRows.length + ' 行</span>，' +
+    '无效: <span class="bad">' + invalidRows.length + ' 行</span>' +
+    (invalidRows.length > 0 ? '（无效行将跳过）' : '');
+
+  var thead = document.getElementById('import-thead');
+  thead.innerHTML = '<tr><th>行</th><th>状态</th><th>用户标识</th><th>显示名</th><th>GitHub</th><th>GitCode</th><th>仓库</th><th>问题</th></tr>';
+
+  var tbody = document.getElementById('import-tbody');
+  var html = '';
+  validRows.forEach(function(v) {
+    html += '<tr class="row-valid"><td>' + v.row + '</td><td>✓</td>' +
+      '<td>' + escapeHtml(v.record.user_key) + '</td>' +
+      '<td>' + escapeHtml(v.record.display_name) + '</td>' +
+      '<td>' + escapeHtml(v.record.github_login) + '</td>' +
+      '<td>' + escapeHtml(v.record.gitcode_login) + '</td>' +
+      '<td>' + escapeHtml(v.record.repository_url) + '</td>' +
+      '<td></td></tr>';
+  });
+  invalidRows.forEach(function(v) {
+    html += '<tr class="row-invalid"><td>' + v.row + '</td><td>✗</td>' +
+      '<td>' + escapeHtml(v.record.user_key) + '</td>' +
+      '<td>' + escapeHtml(v.record.display_name) + '</td>' +
+      '<td>' + escapeHtml(v.record.github_login) + '</td>' +
+      '<td>' + escapeHtml(v.record.gitcode_login) + '</td>' +
+      '<td>' + escapeHtml(v.record.repository_url) + '</td>' +
+      '<td class="err-msg">' + escapeHtml(v.errors.join('; ')) + '</td></tr>';
+  });
+  tbody.innerHTML = html;
+  document.getElementById('btn-confirm-import').disabled = validRows.length === 0;
+  document.getElementById('import-dialog').showModal();
+}
+
+function confirmImport() {
+  var users = Storage.loadUsers();
+  pendingImportRows.forEach(function(v) {
+    users.push(v.record);
+  });
+  Storage.saveUsers(users);
+  pendingImportRows = [];
+  closeImportDialog();
+  renderUsers();
+}
+
+function closeImportDialog() {
+  document.getElementById('import-dialog').close();
+}
+
+function downloadTemplate() {
+  var csv = CsvHelper.generate(CsvHelper.TEMPLATE_HEADERS, [
+    ['zhangsan', '张三', 'zhangsan@example.com', 'zhangsan', 'zhangsan_gc', 'https://github.com/org/repo', 'true']
+  ]);
+  CsvHelper.download('用户导入模板.csv', csv);
+}
+
+
+// ========== Filter Dropdowns ==========
+
+function refreshFilterDropdowns() {
+  var users = Storage.loadUsers();
+  var platform = document.getElementById('stat-platform').value;
+
+  // User dropdown
+  var userSelect = document.getElementById('stat-user');
+  var currentUser = userSelect.value;
+  var uniqueUsers = {};
+  users.forEach(function(u) {
+    if (!u.enabled) return;
+    if (platform) {
+      var parsed = parseRepoUrl(u.repository_url);
+      if (parsed && parsed.platform !== platform) return;
+    }
+    if (!uniqueUsers[u.user_key]) uniqueUsers[u.user_key] = u.display_name || u.user_key;
+  });
+  userSelect.innerHTML = '<option value="">全部</option>';
+  Object.keys(uniqueUsers).sort().forEach(function(key) {
+    var opt = document.createElement('option');
+    opt.value = key; opt.textContent = uniqueUsers[key] + ' (' + key + ')';
+    if (key === currentUser) opt.selected = true;
+    userSelect.appendChild(opt);
+  });
+
+  // Repo dropdown
+  var selectedUser = userSelect.value;
+  var repoSelect = document.getElementById('stat-repo');
+  var currentRepo = repoSelect.value;
+  var uniqueRepos = {};
+  users.forEach(function(u) {
+    if (!u.enabled) return;
+    if (selectedUser && u.user_key !== selectedUser) return;
+    var parsed = parseRepoUrl(u.repository_url);
+    if (!parsed) return;
+    if (platform && parsed.platform !== platform) return;
+    var rk = parsed.owner + '/' + parsed.repo;
+    uniqueRepos[rk] = parsed.platform;
+  });
+  repoSelect.innerHTML = '<option value="">全部</option>';
+  Object.keys(uniqueRepos).sort().forEach(function(key) {
+    var opt = document.createElement('option');
+    opt.value = key; opt.textContent = uniqueRepos[key] + ': ' + key;
+    if (key === currentRepo) opt.selected = true;
+    repoSelect.appendChild(opt);
+  });
+}
+
+
+// ========== Tab Navigation ==========
+
+function switchTab(tabName) {
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.toggle('active', t.dataset.tab === tabName); });
+  document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.toggle('active', p.id === 'tab-' + tabName); });
+  if (tabName === 'users') renderUsers();
+  if (tabName === 'stats') refreshFilterDropdowns();
+}
+
+
+// ========== Initialization ==========
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Tab navigation
+  document.getElementById('tab-nav').addEventListener('click', function(e) {
+    if (e.target.classList.contains('tab')) switchTab(e.target.dataset.tab);
+  });
+
+  // Load saved tokens
+  var config = Storage.loadConfig();
+  if (config.githubToken) {
+    document.getElementById('github-token').value = config.githubToken;
+    showTokenStatus('github', 'ok', '已保存 (' + maskToken(config.githubToken) + ')');
+  }
+  if (config.gitcodeToken) {
+    document.getElementById('gitcode-token').value = config.gitcodeToken;
+    showTokenStatus('gitcode', 'ok', '已保存 (' + maskToken(config.gitcodeToken) + ')');
+  }
+
+  // Default dates
+  document.getElementById('stat-start').value = monthStartStr();
+  document.getElementById('stat-end').value = todayStr();
+
+  // Filter change handlers
+  document.getElementById('stat-platform').addEventListener('change', refreshFilterDropdowns);
+  document.getElementById('stat-user').addEventListener('change', refreshFilterDropdowns);
+
+  // Render users
+  renderUsers();
+
+  // localStorage warning
+  if (!Storage.isAvailable()) {
+    alert('浏览器不支持 localStorage，配置和用户数据将在关闭页面后丢失。建议使用最新版 Chrome 或 Edge 打开本页面。');
+  }
+});
+</script>
+</body>
+</html>

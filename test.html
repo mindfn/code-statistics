@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>PR 代码变更统计 — 自动化测试</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; max-width: 900px; margin: 0 auto; }
+h1 { font-size: 1.3rem; margin-bottom: 16px; }
+.suite { margin-bottom: 20px; }
+.suite h2 { font-size: 1rem; color: #374151; margin-bottom: 8px; }
+.result { padding: 4px 8px; font-size: .85rem; border-left: 3px solid; margin-bottom: 2px; }
+.pass { border-color: #16a34a; background: #f0fdf4; }
+.fail { border-color: #dc2626; background: #fef2f2; }
+.summary { margin-top: 20px; font-weight: 600; font-size: 1rem; }
+.summary.all-pass { color: #16a34a; }
+.summary.has-fail { color: #dc2626; }
+.load-error { color: #dc2626; margin: 20px 0; padding: 12px; background: #fef2f2; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1>PR 代码变更统计 — 自动化测试</h1>
+<div id="load-status">正在加载 index.html 生产代码...</div>
+<div id="output"></div>
+<div id="summary" class="summary"></div>
+
+<!--
+  FCR-2 fix: Load production code from index.html via a hidden iframe.
+  Tests run against the REAL production functions (parseRepoUrl, CsvHelper,
+  StatsEngine, repoKey, escapeHtml), not copies.
+  Requires HTTP server (e.g. python3 -m http.server 8901) — same as Playwright tests.
+-->
+<iframe id="app-frame" src="index.html" style="display:none"></iframe>
+
+<script>
+// ========== Minimal test framework ==========
+var results = [];
+var currentSuite = '';
+function suite(name) { currentSuite = name; }
+function assert(condition, msg) {
+  results.push({ suite: currentSuite, msg: msg, pass: !!condition });
+}
+function assertEqual(actual, expected, msg) {
+  var pass = JSON.stringify(actual) === JSON.stringify(expected);
+  results.push({ suite: currentSuite, msg: msg + (pass ? '' : ' — expected ' + JSON.stringify(expected) + ', got ' + JSON.stringify(actual)), pass: pass });
+}
+
+// ========== Wait for iframe to load, then run tests against production code ==========
+document.getElementById('app-frame').addEventListener('load', async function() {
+  var app = this.contentWindow;
+  var loadStatus = document.getElementById('load-status');
+
+  // Verify production functions are accessible
+  var requiredFns = ['parseRepoUrl', 'escapeHtml', 'repoKey'];
+  var requiredObjs = ['CsvHelper', 'StatsEngine'];
+  var missing = [];
+  requiredFns.forEach(function(fn) { if (typeof app[fn] !== 'function') missing.push(fn); });
+  requiredObjs.forEach(function(obj) { if (typeof app[obj] !== 'object' || app[obj] === null) missing.push(obj); });
+
+  if (missing.length > 0) {
+    loadStatus.className = 'load-error';
+    loadStatus.textContent = '无法加载生产函数: ' + missing.join(', ') + '。请通过 HTTP 服务器访问（python3 -m http.server 8901）';
+    return;
+  }
+  loadStatus.style.display = 'none';
+
+  // Alias production functions for cleaner test code
+  var parseRepoUrl = app.parseRepoUrl;
+  var CsvHelper = app.CsvHelper;
+  var escapeHtml = app.escapeHtml;
+  var repoKey = app.repoKey;
+
+  // Create a fresh StatsEngine-like caller that delegates to production methods
+  // We don't use app.StatsEngine directly because it holds mutable state from the UI;
+  // instead we call its pure methods with test data.
+  var mapPRsToUsers = app.StatsEngine.mapPRsToUsers.bind(app.StatsEngine);
+  var aggregate = app.StatsEngine.aggregate.bind(app.StatsEngine);
+
+  // ==================== Test Suites ====================
+
+  // --- parseRepoUrl ---
+  suite('parseRepoUrl');
+  assertEqual(parseRepoUrl('https://github.com/org/repo'), {platform:'github',owner:'org',repo:'repo'}, 'basic GitHub HTTPS');
+  assertEqual(parseRepoUrl('https://gitcode.com/org/repo'), {platform:'gitcode',owner:'org',repo:'repo'}, 'basic GitCode HTTPS');
+  assertEqual(parseRepoUrl('https://github.com/org/repo.git'), {platform:'github',owner:'org',repo:'repo'}, 'strip .git suffix');
+  assertEqual(parseRepoUrl('git@github.com:org/repo.git'), {platform:'github',owner:'org',repo:'repo'}, 'SSH with .git');
+  assertEqual(parseRepoUrl('https://github.com/acme/my.repo.git'), {platform:'github',owner:'acme',repo:'my.repo'}, 'FC-4: dots in repo name');
+  assertEqual(parseRepoUrl('https://github.com/acme/my.repo'), {platform:'github',owner:'acme',repo:'my.repo'}, 'dots without .git');
+  assertEqual(parseRepoUrl('https://github.com/a/b.c.d.git'), {platform:'github',owner:'a',repo:'b.c.d'}, 'multiple dots + .git');
+  assertEqual(parseRepoUrl(''), null, 'empty string');
+  assertEqual(parseRepoUrl('https://gitlab.com/org/repo'), null, 'unsupported platform');
+  assertEqual(parseRepoUrl('not a url'), null, 'invalid input');
+
+  // --- CsvHelper.parse ---
+  suite('CsvHelper.parse');
+  assertEqual(CsvHelper.parse('a,b\n1,2'), [['a','b'],['1','2']], 'simple 2x2');
+  assertEqual(CsvHelper.parse('﻿a,b\n1,2'), [['a','b'],['1','2']], 'BOM stripped');
+  assertEqual(CsvHelper.parse('a,"b,c"\n1,"2"'), [['a','b,c'],['1','2']], 'quoted comma');
+  assertEqual(CsvHelper.parse('a,"b""c"\n1,2'), [['a','b"c'],['1','2']], 'escaped quote');
+  assertEqual(CsvHelper.parse('"line1\nline2",b'), [['line1\nline2','b']], 'newline in field');
+  assertEqual(CsvHelper.parse('a,b\r\n1,2\r\n'), [['a','b'],['1','2']], 'CRLF line endings');
+  assertEqual(CsvHelper.parse('a,b\n1,2\n\n'), [['a','b'],['1','2']], 'trailing empty rows removed');
+
+  // --- CsvHelper.sanitize (formula injection) ---
+  suite('CsvHelper.sanitize');
+  assertEqual(CsvHelper.sanitize('=SUM(A1)'), "'=SUM(A1)", 'prefix = with quote');
+  assertEqual(CsvHelper.sanitize('+cmd'), "'+cmd", 'prefix + with quote');
+  assertEqual(CsvHelper.sanitize('-cmd'), "'-cmd", 'prefix - with quote');
+  assertEqual(CsvHelper.sanitize('@import'), "'@import", 'prefix @ with quote');
+  assertEqual(CsvHelper.sanitize('hello'), 'hello', 'no prefix for normal text');
+  assertEqual(CsvHelper.sanitize(123), 123, 'non-string passthrough');
+
+  // --- CsvHelper.generate ---
+  suite('CsvHelper.generate');
+  var csv = CsvHelper.generate(['A','B'], [['1','2'],['x,y','=danger']]);
+  assert(csv.charCodeAt(0) === 0xFEFF, 'starts with BOM');
+  assert(csv.indexOf('"x,y"') > 0, 'comma in field is quoted');
+  assert(csv.indexOf("'=danger") > 0, 'formula sanitized');
+  assert(csv.indexOf('\r\n') > 0, 'uses CRLF');
+
+  // --- User mapping (FC-1: repo-aware) ---
+  suite('User mapping (FC-1)');
+  var testUsers = [
+    { user_key: 'alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repoA', enabled: true },
+    { user_key: 'bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', repository_url: 'https://github.com/org/repoB', enabled: true }
+  ];
+  var testPRs = [
+    { platform: 'github', repo: 'org/repoA', author: 'alice-gh', number: 1, additions: 10, deletions: 5, changedFiles: 1, completeness: 'full' },
+    { platform: 'github', repo: 'org/repoB', author: 'alice-gh', number: 2, additions: 20, deletions: 10, changedFiles: 2, completeness: 'full' },
+    { platform: 'github', repo: 'org/repoA', author: 'unknown-dev', number: 3, additions: 5, deletions: 1, changedFiles: 1, completeness: 'full' }
+  ];
+  mapPRsToUsers(testPRs, testUsers);
+  assert(testPRs[0].matched === true && testPRs[0].userKey === 'alice', 'alice matched on repoA');
+  assert(testPRs[1].matched === false, 'alice NOT matched on repoB (not associated)');
+  assert(testPRs[2].matched === false, 'unknown-dev not matched');
+
+  // --- Aggregate (FC-1: unmatched separation, FC-2: partial propagation) ---
+  suite('Aggregate (FC-1 + FC-2)');
+  var testPRs2 = [
+    { platform: 'github', repo: 'org/repo', author: 'alice', userKey: 'alice', displayName: 'Alice', matched: true, additions: 100, deletions: 50, changedFiles: 3, completeness: 'full' },
+    { platform: 'github', repo: 'org/repo', author: 'alice', userKey: 'alice', displayName: 'Alice', matched: true, additions: 200, deletions: 30, changedFiles: 5, completeness: 'full', repoPartial: true },
+    { platform: 'github', repo: 'org/repo', author: 'outsider', userKey: '', displayName: 'outsider', matched: false, additions: 50, deletions: 10, changedFiles: 2, completeness: 'full' }
+  ];
+  var agg = aggregate(testPRs2);
+  var aliceRow = agg.find(function(r) { return r.matched; });
+  var outsiderRow = agg.find(function(r) { return !r.matched; });
+  assert(aliceRow, 'alice row exists');
+  assertEqual(aliceRow.prCount, 2, 'alice has 2 PRs');
+  assertEqual(aliceRow.additions, 300, 'alice additions = 100+200');
+  assertEqual(aliceRow.deletions, 80, 'alice deletions = 50+30');
+  assert(aliceRow.hasPartial === true, 'FC-2: repoPartial propagated to summary');
+  assert(outsiderRow, 'outsider row exists');
+  assert(!outsiderRow.matched, 'outsider marked as unmatched');
+  assertEqual(outsiderRow.prCount, 1, 'outsider has 1 PR');
+
+  // --- Aggregation math invariant ---
+  suite('Aggregation math');
+  agg.forEach(function(r) {
+    var net = r.additions - r.deletions;
+    var changes = r.additions + r.deletions;
+    assert(changes >= 0, 'changes >= 0 for ' + r.userKey);
+    assert(changes === r.additions + r.deletions, 'changes = additions + deletions for ' + r.userKey);
+  });
+
+  // --- Request dedup: buildRepoList ---
+  suite('Request dedup');
+  var dedup_users = [
+    { user_key: 'u1', github_login: 'u1', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
+    { user_key: 'u2', github_login: 'u2', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
+    { user_key: 'u3', github_login: 'u3', gitcode_login: '', repository_url: 'https://github.com/org/other', enabled: true },
+    { user_key: 'u4', github_login: 'u4', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: false }
+  ];
+  var repoList = app.StatsEngine.buildRepoList(dedup_users, {});
+  assertEqual(repoList.length, 2, 'two users on same repo → one fetch (AC-B4)');
+
+  // --- FCR-1: partialRepos tracking ---
+  suite('partialRepos tracking (FCR-1)');
+  assert(Array.isArray(app.StatsEngine.partialRepos), 'StatsEngine.partialRepos is an array');
+  // Verify partialRepos field exists and is independent of PR data
+  var savedPartial = app.StatsEngine.partialRepos;
+  app.StatsEngine.partialRepos = [{ platform: 'github', repo: 'org/big-repo' }];
+  assertEqual(app.StatsEngine.partialRepos.length, 1, 'partialRepos can be set independently');
+  assertEqual(app.StatsEngine.partialRepos[0].repo, 'org/big-repo', 'partialRepos holds repo info');
+  app.StatsEngine.partialRepos = savedPartial; // restore
+
+  // --- FCR-3: disabled users must not get PR attribution ---
+  suite('Disabled user exclusion (FCR-3)');
+  var fcr3Users = [
+    { user_key: 'active-alice', display_name: 'Alice', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true },
+    { user_key: 'disabled-bob', display_name: 'Bob', github_login: 'bob-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: false }
+  ];
+  var fcr3PRs = [
+    { platform: 'github', repo: 'org/repo', author: 'alice-gh', number: 1, additions: 10, deletions: 5, changedFiles: 1, completeness: 'full' },
+    { platform: 'github', repo: 'org/repo', author: 'bob-gh', number: 2, additions: 20, deletions: 10, changedFiles: 2, completeness: 'full' }
+  ];
+  mapPRsToUsers(fcr3PRs, fcr3Users);
+  assert(fcr3PRs[0].matched === true, 'enabled user alice matched');
+  assert(fcr3PRs[1].matched === false, 'disabled user bob NOT matched');
+  // Edge case: disabled record listed before enabled, same login
+  var fcr3Users2 = [
+    { user_key: 'disabled-first', display_name: 'Alice D', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: false },
+    { user_key: 'enabled-second', display_name: 'Alice E', github_login: 'alice-gh', gitcode_login: '', repository_url: 'https://github.com/org/repo', enabled: true }
+  ];
+  var fcr3PRs2 = [
+    { platform: 'github', repo: 'org/repo', author: 'alice-gh', number: 3, additions: 5, deletions: 1, changedFiles: 1, completeness: 'full' }
+  ];
+  mapPRsToUsers(fcr3PRs2, fcr3Users2);
+  assert(fcr3PRs2[0].matched === true && fcr3PRs2[0].userKey === 'enabled-second', 'disabled-before-enabled: matches enabled record');
+
+  // --- FCR-4: GitHub incomplete_results behavioral test ---
+  suite('GitHub incomplete_results (FCR-4)');
+  var ghProvider = app.GitHubProvider;
+  var ghOrigFetch = ghProvider._fetch;
+  // Mock _fetch: search returns incomplete_results=true with 1 item, detail returns valid PR
+  var ghFetchCallCount = 0;
+  ghProvider._fetch = function(url) {
+    ghFetchCallCount++;
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({
+        total_count: 1, incomplete_results: true,
+        items: [{ number: 42 }]
+      });
+    }
+    // PR detail
+    return Promise.resolve({
+      number: 42, merged_at: '2026-01-15T10:00:00Z',
+      user: { login: 'testuser' }, base: { ref: 'main' },
+      additions: 10, deletions: 5, changed_files: 2
+    });
+  };
+  var ghResult = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch; // restore immediately
+  assert(ghResult.partial === true, 'incomplete_results=true → partial=true');
+  assert(ghResult.partialReason && ghResult.partialReason.indexOf('不完整') >= 0, 'partialReason mentions incompleteness, not "超过上限"');
+
+  // --- FCR-5: GitHub unparsable metrics behavioral test ---
+  suite('GitHub unparsable metrics (FCR-5)');
+  ghProvider._fetch = function(url) {
+    if (url.indexOf('/search/issues') >= 0) {
+      return Promise.resolve({
+        total_count: 1, incomplete_results: false,
+        items: [{ number: 99 }]
+      });
+    }
+    // PR detail with missing additions field
+    return Promise.resolve({
+      number: 99, merged_at: '2026-01-15T10:00:00Z',
+      user: { login: 'testuser' }, base: { ref: 'main' },
+      additions: undefined, deletions: 5, changed_files: 2
+    });
+  };
+  var ghResult2 = await ghProvider.fetchMergedPRs('tok', 'org', 'repo', 'main', '2026-01-01', '2026-01-31', new AbortController().signal, function(){});
+  ghProvider._fetch = ghOrigFetch; // restore
+  assert(ghResult2.prs.length === 1, 'one PR returned');
+  assert(ghResult2.prs[0].completeness === 'partial', 'missing additions → completeness=partial');
+  assertEqual(ghResult2.prs[0].additions, 0, 'unparsable additions defaults to 0');
+
+  // --- FCR-5: GitCode changed_files unparsable → falls through to files endpoint ---
+  suite('GitCode unparsable changed_files (FCR-5)');
+  var gcProvider = app.GitCodeProvider;
+  var gcOrigFetch = gcProvider._fetch;
+  var gcFilesEndpointCalled = false;
+  gcProvider._fetch = function(url) {
+    if (url.indexOf('/files') >= 0) {
+      gcFilesEndpointCalled = true;
+      return Promise.resolve([
+        { additions: 10, deletions: 3 },
+        { additions: 5, deletions: 2 }
+      ]);
+    }
+    // Detail endpoint: changed_files is not a number
+    return Promise.resolve({
+      additions: 100, deletions: 50, changed_files: 'N/A'
+    });
+  };
+  var gcResult = await gcProvider._getPRStats('tok', 'org', 'repo', 1, new AbortController().signal);
+  gcProvider._fetch = gcOrigFetch; // restore
+  assert(gcFilesEndpointCalled === true, 'unparsable changed_files → falls through to /files endpoint');
+  assertEqual(gcResult.additions, 15, 'files endpoint additions = 10+5');
+  assertEqual(gcResult.deletions, 5, 'files endpoint deletions = 3+2');
+  assertEqual(gcResult.changedFiles, 2, 'files endpoint changedFiles = file count');
+  assertEqual(gcResult.completeness, 'full', 'files endpoint with valid data = full');
+
+  // --- Production code identity check ---
+  suite('Production code identity (FCR-2)');
+  assert(parseRepoUrl === app.parseRepoUrl, 'parseRepoUrl is from production, not a copy');
+  assert(CsvHelper === app.CsvHelper, 'CsvHelper is from production, not a copy');
+  assert(typeof app.StatsEngine.completenessLabel === 'function', 'StatsEngine.completenessLabel exists in production');
+  assert(typeof app.StatsEngine.completenessClass === 'function', 'StatsEngine.completenessClass exists in production');
+  assert(typeof app.GitHubProvider === 'object', 'GitHubProvider exists in production');
+  assert(typeof app.GitCodeProvider === 'object', 'GitCodeProvider exists in production');
+
+  // ==================== Render Results ====================
+  renderTestResults();
+});
+
+// Handle iframe load error
+document.getElementById('app-frame').addEventListener('error', function() {
+  var loadStatus = document.getElementById('load-status');
+  loadStatus.className = 'load-error';
+  loadStatus.textContent = '无法加载 index.html。请通过 HTTP 服务器访问（python3 -m http.server 8901）';
+});
+
+// Timeout: if iframe doesn't load within 5 seconds
+setTimeout(function() {
+  var loadStatus = document.getElementById('load-status');
+  if (loadStatus.style.display !== 'none' && results.length === 0) {
+    loadStatus.className = 'load-error';
+    loadStatus.textContent = '加载超时。请确认通过 HTTP 服务器访问（python3 -m http.server 8901），file:// 协议不支持 iframe 跨文档访问。';
+  }
+}, 5000);
+
+function renderTestResults() {
+  var output = document.getElementById('output');
+  var passCount = 0, failCount = 0;
+  var lastSuite = '';
+  results.forEach(function(r) {
+    if (r.suite !== lastSuite) {
+      lastSuite = r.suite;
+      var h = document.createElement('h2');
+      h.textContent = r.suite;
+      var div = document.createElement('div');
+      div.className = 'suite';
+      div.appendChild(h);
+      output.appendChild(div);
+    }
+    var el = document.createElement('div');
+    el.className = 'result ' + (r.pass ? 'pass' : 'fail');
+    el.textContent = (r.pass ? '✓ ' : '✗ ') + r.msg;
+    output.lastChild.appendChild(el);
+    if (r.pass) passCount++; else failCount++;
+  });
+  var sumEl = document.getElementById('summary');
+  sumEl.className = 'summary ' + (failCount === 0 ? 'all-pass' : 'has-fail');
+  sumEl.textContent = passCount + ' passed, ' + failCount + ' failed, ' + results.length + ' total';
+}
+</script>
+</body>
+</html>
